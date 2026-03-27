@@ -11,7 +11,10 @@ export interface UploadResult {
   upload_id: number;
   subject: string;
   total_responses: number;
-  avg_delivery_rating: number;
-  avg_content_rating: number;
+  avg_delivery_rating: number | null;
+  avg_content_rating: number | null;
   message?: string;
+  format?: string;
+  instructor?: string | null;
+  topic?: string | null;
 }

@@ -4,6 +4,9 @@ export interface ParsedSession {
   subject: string;
   session_type: string;
   session_date: string;
+  format: "FORMAT_A" | "FORMAT_B";
+  instructor: string | null;
+  topic: string | null;
   responses: ParsedResponse[];
 }
 
@@ -15,6 +18,9 @@ export interface ParsedResponse {
   content_rating: number | null;
   feedback_text: string;
   cohort: string;
+  instructor: string | null;
+  topic: string | null;
+  additional_feedback: string | null;
 }
 
 function detectCohort(email: string): string {
@@ -33,71 +39,80 @@ function parseRating(val: string): number | null {
   return num;
 }
 
-export function parseZoomCsv(content: string): ParsedSession {
-  // Remove BOM if present
-  const cleaned = content.replace(/^\uFEFF/, "");
+function parseLine(line: string): string[] {
+  const result: string[] = [];
+  let current = "";
+  let inQuotes = false;
 
-  // Split into lines (handle CRLF and LF)
-  const rawLines = cleaned.split(/\r?\n/);
-
-  // Parse CSV line respecting quoted fields
-  function parseLine(line: string): string[] {
-    const result: string[] = [];
-    let current = "";
-    let inQuotes = false;
-
-    for (let i = 0; i < line.length; i++) {
-      const ch = line[i];
-      if (ch === '"') {
-        if (inQuotes && line[i + 1] === '"') {
-          current += '"';
-          i++;
-        } else {
-          inQuotes = !inQuotes;
-        }
-      } else if (ch === "," && !inQuotes) {
-        result.push(current);
-        current = "";
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        current += '"';
+        i++;
       } else {
-        current += ch;
+        inQuotes = !inQuotes;
       }
+    } else if (ch === "," && !inQuotes) {
+      result.push(current);
+      current = "";
+    } else {
+      current += ch;
     }
-    result.push(current);
-    return result;
+  }
+  result.push(current);
+  return result;
+}
+
+export function detectCSVFormat(fileContent: string): "FORMAT_A" | "FORMAT_B" {
+  const firstLine = fileContent.split("\n")[0].toLowerCase();
+
+  if (
+    firstLine.includes("instructor") ||
+    firstLine.includes("topic/name") ||
+    firstLine.includes("session rating")
+  ) {
+    return "FORMAT_B";
   }
 
-  // Row 3 (index 2) contains meeting metadata
-  const metaRow = parseLine(rawLines[2] || "");
+  if (firstLine.includes("overview")) {
+    return "FORMAT_A";
+  }
 
-  // Generate Time is col 0, Meeting Topic col 1, Meeting ID col 2, Actual Start Time col 3
+  const first3Lines = fileContent.split("\n").slice(0, 3).join("\n").toLowerCase();
+  if (first3Lines.includes("user name") && first3Lines.includes("email")) {
+    return "FORMAT_B";
+  }
+
+  return "FORMAT_A";
+}
+
+function parseFormatA(content: string): ParsedSession {
+  const cleaned = content.replace(/^\uFEFF/, "");
+  const rawLines = cleaned.split(/\r?\n/);
+
+  const metaRow = parseLine(rawLines[2] || "");
   const rawMeetingId = metaRow[2]?.trim() || "";
   const rawMeetingTopic = metaRow[1]?.trim() || "";
   const rawStartTime = metaRow[3]?.trim() || "";
 
-  // Parse subject and session_type from meeting topic
-  // Format: "ATA || Practical Session" or "LANA || Theory Session"
   let subject = rawMeetingTopic;
   let session_type = "Unknown";
   if (rawMeetingTopic.includes("||")) {
     const parts = rawMeetingTopic.split("||");
     subject = parts[0].trim();
     session_type = parts[1].trim();
-    // Remove " Session" suffix if present
     session_type = session_type.replace(/\s+Session$/i, "").trim();
   }
 
-  // Parse session date - format MM-DD-YYYY HH:mm
   let session_date = rawStartTime;
   if (rawStartTime) {
-    // Try to format as YYYY-MM-DD
     const parts = rawStartTime.split(" ")[0].split("-");
     if (parts.length === 3) {
-      // MM-DD-YYYY
       session_date = `${parts[2]}-${parts[0]}-${parts[1]}`;
     }
   }
 
-  // Find the header row (row 10, index 9) - it contains "User Name"
   let headerRowIndex = -1;
   for (let i = 0; i < rawLines.length; i++) {
     if (rawLines[i].includes("User Name") && rawLines[i].includes("Email Address")) {
@@ -110,7 +125,6 @@ export function parseZoomCsv(content: string): ParsedSession {
     throw new Error("Could not find header row in CSV. Expected row with 'User Name' and 'Email Address'.");
   }
 
-  // Parse data rows starting after header
   const responses: ParsedResponse[] = [];
 
   for (let i = headerRowIndex + 1; i < rawLines.length; i++) {
@@ -118,12 +132,9 @@ export function parseZoomCsv(content: string): ParsedSession {
     if (!line || !line.trim()) continue;
 
     const cols = parseLine(line);
-
-    // Col B (index 1) = student name - stop if empty
     const studentName = cols[1]?.trim();
     if (!studentName) break;
 
-    // Skip if it looks like a summary row
     if (studentName.toLowerCase().startsWith("avg") || studentName === "#") continue;
 
     const studentEmail = cols[2]?.trim() || "";
@@ -141,6 +152,9 @@ export function parseZoomCsv(content: string): ParsedSession {
       content_rating: contentRating,
       feedback_text: feedbackText,
       cohort,
+      instructor: null,
+      topic: null,
+      additional_feedback: null,
     });
   }
 
@@ -150,6 +164,109 @@ export function parseZoomCsv(content: string): ParsedSession {
     subject,
     session_type,
     session_date,
+    format: "FORMAT_A",
+    instructor: null,
+    topic: null,
     responses,
   };
+}
+
+function parseFormatB(content: string): ParsedSession {
+  const cleaned = content.replace(/^\uFEFF/, "");
+  const lines = cleaned.split(/\r?\n/).filter((l) => l.trim());
+
+  const headers = parseLine(lines[0]).map((h) => h.toLowerCase().trim());
+
+  const idx = {
+    userName: headers.findIndex((h) => h.includes("user name")),
+    email: headers.findIndex((h) => h.includes("email")),
+    submitted: headers.findIndex((h) => h.includes("submitted")),
+    collected: headers.findIndex((h) => h.includes("collected")),
+    topic: headers.findIndex((h) => h.includes("topic")),
+    meetingId: headers.findIndex((h) => h.includes("meeting")),
+    sessionRating: headers.findIndex(
+      (h) => h.includes("session rating") || (h.includes("rating") && !h.includes("additional"))
+    ),
+    instructor: headers.findIndex((h) => h.includes("instructor")),
+    feedback: headers.findIndex((h) => h.includes("how was")),
+    additionalFeedback: headers.findIndex((h) => h.includes("additional")),
+  };
+
+  let meetingId: string | null = null;
+  let sessionDate: string | null = null;
+
+  const responses: ParsedResponse[] = [];
+
+  for (let i = 1; i < lines.length; i++) {
+    const cols = parseLine(lines[i]);
+    if (!cols || cols.length < 3) continue;
+
+    const rowMeetingId = idx.meetingId >= 0 ? cols[idx.meetingId]?.trim() : null;
+    if (!meetingId && rowMeetingId) meetingId = rowMeetingId;
+
+    const rowSessionDate =
+      idx.collected >= 0
+        ? cols[idx.collected]?.trim()
+        : idx.submitted >= 0
+        ? cols[idx.submitted]?.trim()
+        : null;
+    if (!sessionDate && rowSessionDate) sessionDate = rowSessionDate;
+
+    const ratingRaw = idx.sessionRating >= 0 ? cols[idx.sessionRating]?.trim() : null;
+    const rating = ratingRaw ? parseRating(ratingRaw) : null;
+
+    const instructor = idx.instructor >= 0 ? cols[idx.instructor]?.trim() || null : null;
+    const topic = idx.topic >= 0 ? cols[idx.topic]?.trim() || null : null;
+    const studentEmail = idx.email >= 0 ? cols[idx.email]?.trim() || "" : "";
+
+    responses.push({
+      student_name: idx.userName >= 0 ? cols[idx.userName]?.trim() || "" : "",
+      student_email: studentEmail,
+      submission_time: idx.submitted >= 0 ? cols[idx.submitted]?.trim() || "" : "",
+      delivery_rating: rating,
+      content_rating: rating,
+      feedback_text: idx.feedback >= 0 ? cols[idx.feedback]?.trim() || "" : "",
+      additional_feedback:
+        idx.additionalFeedback >= 0 ? cols[idx.additionalFeedback]?.trim() || null : null,
+      instructor,
+      topic,
+      cohort: detectCohort(studentEmail),
+    });
+  }
+
+  const instructorCounts: Record<string, number> = {};
+  const topicCounts: Record<string, number> = {};
+  for (const r of responses) {
+    if (r.instructor) instructorCounts[r.instructor] = (instructorCounts[r.instructor] || 0) + 1;
+    if (r.topic) topicCounts[r.topic] = (topicCounts[r.topic] || 0) + 1;
+  }
+
+  const dominantInstructor =
+    Object.entries(instructorCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+  const dominantTopic =
+    Object.entries(topicCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+
+  if (!meetingId) {
+    throw new Error("Could not determine Meeting ID from Format B CSV.");
+  }
+
+  return {
+    meeting_id: meetingId,
+    meeting_topic: dominantTopic || "Unknown Topic",
+    subject: "",
+    session_type: "Theory",
+    session_date: sessionDate || "",
+    format: "FORMAT_B",
+    instructor: dominantInstructor,
+    topic: dominantTopic,
+    responses,
+  };
+}
+
+export function parseZoomCsv(content: string): ParsedSession {
+  const format = detectCSVFormat(content);
+  if (format === "FORMAT_B") {
+    return parseFormatB(content);
+  }
+  return parseFormatA(content);
 }

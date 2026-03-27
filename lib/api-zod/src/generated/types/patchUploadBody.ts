@@ -6,13 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface SubjectSession {
-  upload_id: number;
-  session_date: string;
-  week_number: string;
-  total_responses: number;
-  avg_delivery: number;
-  avg_content: number;
+export type PatchUploadBody = {
   instructor?: string | null;
   topic?: string | null;
-}
+};

@@ -232,6 +232,10 @@ paths:
                   type: string
                 week_number:
                   type: string
+                instructor:
+                  type: string
+                topic:
+                  type: string
               required:
                 - file
                 - program_name
@@ -250,6 +254,122 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/UploadError"
+
+  /upload/{id}:
+    patch:
+      operationId: patchUpload
+      tags: [upload]
+      summary: Update instructor and topic for an upload
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                instructor:
+                  type: string
+                  nullable: true
+                topic:
+                  type: string
+                  nullable: true
+      responses:
+        "200":
+          description: Update result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                required:
+                  - success
+
+  /instructors:
+    get:
+      operationId: getInstructors
+      tags: [dashboard]
+      summary: Get all instructors with analytics
+      responses:
+        "200":
+          description: Instructor list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/InstructorSummary"
+
+  /instructor/{name}:
+    get:
+      operationId: getInstructor
+      tags: [dashboard]
+      summary: Get per-instructor drill-down
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Instructor detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InstructorDetail"
+
+  /topics:
+    get:
+      operationId: getTopics
+      tags: [dashboard]
+      summary: Get all topics with analytics
+      parameters:
+        - name: subject
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: instructor
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Topic list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TopicSummary"
+
+  /topic/{topicName}:
+    get:
+      operationId: getTopic
+      tags: [dashboard]
+      summary: Get per-topic drill-down
+      parameters:
+        - name: topicName
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Topic detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TopicDetail"
 
 components:
   schemas:
@@ -292,6 +412,10 @@ components:
           required:
             - from
             - to
+        total_instructors:
+          type: integer
+        total_topics:
+          type: integer
       required:
         - total_sessions
         - total_responses
@@ -301,6 +425,8 @@ components:
         - subjects
         - programs
         - date_range
+        - total_instructors
+        - total_topics
 
     SubjectSession:
       type: object
@@ -317,6 +443,12 @@ components:
           type: number
         avg_content:
           type: number
+        instructor:
+          type: string
+          nullable: true
+        topic:
+          type: string
+          nullable: true
       required:
         - upload_id
         - session_date
@@ -380,6 +512,10 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/SubjectTrendPoint"
+        instructors:
+          type: array
+          items:
+            type: string
       required:
         - subject
         - total_sessions
@@ -609,6 +745,14 @@ components:
           type: string
         meeting_topic:
           type: string
+        format_version:
+          type: string
+        instructor:
+          type: string
+          nullable: true
+        topic:
+          type: string
+          nullable: true
       required:
         - id
         - subject
@@ -634,10 +778,20 @@ components:
           type: integer
         avg_delivery_rating:
           type: number
+          nullable: true
         avg_content_rating:
           type: number
+          nullable: true
         message:
           type: string
+        format:
+          type: string
+        instructor:
+          type: string
+          nullable: true
+        topic:
+          type: string
+          nullable: true
       required:
         - success
         - upload_id
@@ -661,3 +815,174 @@ components:
         - success
         - error
         - message
+
+    InstructorSummary:
+      type: object
+      properties:
+        instructor:
+          type: string
+        total_sessions:
+          type: integer
+        subjects:
+          type: array
+          items:
+            type: string
+        total_responses:
+          type: integer
+        avg_rating:
+          type: number
+        avg_delivery:
+          type: number
+        avg_content:
+          type: number
+      required:
+        - instructor
+        - total_sessions
+        - subjects
+        - total_responses
+        - avg_rating
+        - avg_delivery
+        - avg_content
+
+    InstructorByWeek:
+      type: object
+      properties:
+        session_date:
+          type: string
+        subject:
+          type: string
+        avg_rating:
+          type: number
+        responses:
+          type: integer
+      required:
+        - session_date
+        - subject
+        - avg_rating
+        - responses
+
+    InstructorDetail:
+      type: object
+      properties:
+        instructor:
+          type: string
+        total_sessions:
+          type: integer
+        total_responses:
+          type: integer
+        avg_rating:
+          type: number
+        avg_delivery:
+          type: number
+        avg_content:
+          type: number
+        by_subject:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              avg:
+                type: number
+              sessions:
+                type: integer
+        by_week:
+          type: array
+          items:
+            $ref: "#/components/schemas/InstructorByWeek"
+        feedback_summary:
+          type: object
+          properties:
+            positive:
+              type: integer
+            negative:
+              type: integer
+            suggestion:
+              type: integer
+            top_themes:
+              type: array
+              items:
+                type: string
+      required:
+        - instructor
+        - total_sessions
+        - total_responses
+        - avg_rating
+        - by_subject
+        - by_week
+        - feedback_summary
+
+    TopicSummary:
+      type: object
+      properties:
+        topic:
+          type: string
+        subject:
+          type: string
+        instructor:
+          type: string
+          nullable: true
+        sessions:
+          type: integer
+        total_responses:
+          type: integer
+        avg_rating:
+          type: number
+        feedback_count:
+          type: integer
+      required:
+        - topic
+        - subject
+        - sessions
+        - total_responses
+        - avg_rating
+        - feedback_count
+
+    TopicDetail:
+      type: object
+      properties:
+        topic:
+          type: string
+        subject:
+          type: string
+        instructor:
+          type: string
+          nullable: true
+        session_date:
+          type: string
+        total_responses:
+          type: integer
+        avg_delivery:
+          type: number
+        avg_content:
+          type: number
+        distribution:
+          type: object
+          additionalProperties:
+            type: integer
+        nps:
+          type: number
+        feedback:
+          type: object
+          properties:
+            useful:
+              type: integer
+            sentiment:
+              $ref: "#/components/schemas/SentimentBreakdown"
+            top_issues:
+              type: array
+              items:
+                type: string
+            suggestions:
+              type: array
+              items:
+                type: string
+      required:
+        - topic
+        - subject
+        - session_date
+        - total_responses
+        - avg_delivery
+        - avg_content
+        - distribution
+        - nps
+        - feedback

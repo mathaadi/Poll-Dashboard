@@ -17,4 +17,7 @@ export interface UploadHistory {
   upload_timestamp: string;
   session_type: string;
   meeting_topic: string;
+  format_version?: string;
+  instructor?: string | null;
+  topic?: string | null;
 }

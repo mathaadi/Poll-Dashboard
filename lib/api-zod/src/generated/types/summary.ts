@@ -16,4 +16,6 @@ export interface Summary {
   subjects: string[];
   programs: string[];
   date_range: SummaryDateRange;
+  total_instructors: number;
+  total_topics: number;
 }

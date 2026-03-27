@@ -21,6 +21,9 @@ export const uploadsTable = pgTable("uploads", {
   feedback_count: integer("feedback_count").default(0),
   nps_delivery: real("nps_delivery"),
   nps_content: real("nps_content"),
+  format_version: text("format_version").default("A"),
+  instructor: text("instructor"),
+  topic: text("topic"),
 }, (table) => [
   unique().on(table.meeting_id),
 ]);
@@ -39,6 +42,11 @@ export const pollResponsesTable = pgTable("poll_responses", {
   feedback_themes: text("feedback_themes"),
   is_useful_feedback: integer("is_useful_feedback").default(0),
   translated_text: text("translated_text"),
+  instructor: text("instructor"),
+  topic: text("topic"),
+  additional_feedback: text("additional_feedback"),
+  additional_sentiment: text("additional_sentiment"),
+  additional_themes: text("additional_themes"),
 });
 
 export const studentsTable = pgTable("students", {

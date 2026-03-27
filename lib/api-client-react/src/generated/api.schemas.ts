@@ -23,6 +23,8 @@ export interface Summary {
   subjects: string[];
   programs: string[];
   date_range: SummaryDateRange;
+  total_instructors: number;
+  total_topics: number;
 }
 
 export interface SubjectSession {
@@ -32,6 +34,8 @@ export interface SubjectSession {
   total_responses: number;
   avg_delivery: number;
   avg_content: number;
+  instructor?: string | null;
+  topic?: string | null;
 }
 
 export interface TrendPoint {
@@ -57,6 +61,7 @@ export interface SubjectAnalytics {
   avg_content: number;
   nps: number;
   trend: SubjectTrendPoint[];
+  instructors?: string[];
 }
 
 export interface CohortSubjectRating {
@@ -147,6 +152,9 @@ export interface UploadHistory {
   upload_timestamp: string;
   session_type: string;
   meeting_topic: string;
+  format_version?: string;
+  instructor?: string | null;
+  topic?: string | null;
 }
 
 export interface UploadResult {
@@ -154,9 +162,12 @@ export interface UploadResult {
   upload_id: number;
   subject: string;
   total_responses: number;
-  avg_delivery_rating: number;
-  avg_content_rating: number;
+  avg_delivery_rating: number | null;
+  avg_content_rating: number | null;
   message?: string;
+  format?: string;
+  instructor?: string | null;
+  topic?: string | null;
 }
 
 export interface UploadError {
@@ -164,6 +175,81 @@ export interface UploadError {
   error: string;
   message: string;
   original_upload_date?: string;
+}
+
+export interface InstructorSummary {
+  instructor: string;
+  total_sessions: number;
+  subjects: string[];
+  total_responses: number;
+  avg_rating: number;
+  avg_delivery: number;
+  avg_content: number;
+}
+
+export interface InstructorByWeek {
+  session_date: string;
+  subject: string;
+  avg_rating: number;
+  responses: number;
+}
+
+export type InstructorDetailBySubject = {
+  [key: string]: {
+    avg?: number;
+    sessions?: number;
+  };
+};
+
+export type InstructorDetailFeedbackSummary = {
+  positive?: number;
+  negative?: number;
+  suggestion?: number;
+  top_themes?: string[];
+};
+
+export interface InstructorDetail {
+  instructor: string;
+  total_sessions: number;
+  total_responses: number;
+  avg_rating: number;
+  avg_delivery?: number;
+  avg_content?: number;
+  by_subject: InstructorDetailBySubject;
+  by_week: InstructorByWeek[];
+  feedback_summary: InstructorDetailFeedbackSummary;
+}
+
+export interface TopicSummary {
+  topic: string;
+  subject: string;
+  instructor?: string | null;
+  sessions: number;
+  total_responses: number;
+  avg_rating: number;
+  feedback_count: number;
+}
+
+export type TopicDetailDistribution = { [key: string]: number };
+
+export type TopicDetailFeedback = {
+  useful?: number;
+  sentiment?: SentimentBreakdown;
+  top_issues?: string[];
+  suggestions?: string[];
+};
+
+export interface TopicDetail {
+  topic: string;
+  subject: string;
+  instructor?: string | null;
+  session_date: string;
+  total_responses: number;
+  avg_delivery: number;
+  avg_content: number;
+  distribution: TopicDetailDistribution;
+  nps: number;
+  feedback: TopicDetailFeedback;
 }
 
 export type GetSubjectSessionsParams = {
@@ -200,4 +286,20 @@ export type UploadCsvBody = {
   cohort?: string;
   semester: string;
   week_number: string;
+  instructor?: string;
+  topic?: string;
+};
+
+export type PatchUploadBody = {
+  instructor?: string | null;
+  topic?: string | null;
+};
+
+export type PatchUpload200 = {
+  success: boolean;
+};
+
+export type GetTopicsParams = {
+  subject?: string;
+  instructor?: string;
 };

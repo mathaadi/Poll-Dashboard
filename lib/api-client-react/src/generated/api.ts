@@ -24,12 +24,19 @@ import type {
   GetDistributionParams,
   GetFeedbackParams,
   GetSubjectSessionsParams,
+  GetTopicsParams,
   GetTrendsParams,
   HealthStatus,
+  InstructorDetail,
+  InstructorSummary,
   OverallDistribution,
+  PatchUpload200,
+  PatchUploadBody,
   SubjectAnalytics,
   SubjectSession,
   Summary,
+  TopicDetail,
+  TopicSummary,
   TrendPoint,
   UploadCsvBody,
   UploadError,
@@ -971,6 +978,12 @@ export const uploadCsv = async (
   }
   formData.append(`semester`, uploadCsvBody.semester);
   formData.append(`week_number`, uploadCsvBody.week_number);
+  if (uploadCsvBody.instructor !== undefined) {
+    formData.append(`instructor`, uploadCsvBody.instructor);
+  }
+  if (uploadCsvBody.topic !== undefined) {
+    formData.append(`topic`, uploadCsvBody.topic);
+  }
 
   return customFetch<UploadResult>(getUploadCsvUrl(), {
     ...options,
@@ -1045,3 +1058,431 @@ export const useUploadCsv = <
 > => {
   return useMutation(getUploadCsvMutationOptions(options));
 };
+
+/**
+ * @summary Update instructor and topic for an upload
+ */
+export const getPatchUploadUrl = (id: number) => {
+  return `/api/upload/${id}`;
+};
+
+export const patchUpload = async (
+  id: number,
+  patchUploadBody: PatchUploadBody,
+  options?: RequestInit,
+): Promise<PatchUpload200> => {
+  return customFetch<PatchUpload200>(getPatchUploadUrl(id), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(patchUploadBody),
+  });
+};
+
+export const getPatchUploadMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof patchUpload>>,
+    TError,
+    { id: number; data: BodyType<PatchUploadBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof patchUpload>>,
+  TError,
+  { id: number; data: BodyType<PatchUploadBody> },
+  TContext
+> => {
+  const mutationKey = ["patchUpload"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof patchUpload>>,
+    { id: number; data: BodyType<PatchUploadBody> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return patchUpload(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type PatchUploadMutationResult = NonNullable<
+  Awaited<ReturnType<typeof patchUpload>>
+>;
+export type PatchUploadMutationBody = BodyType<PatchUploadBody>;
+export type PatchUploadMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Update instructor and topic for an upload
+ */
+export const usePatchUpload = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof patchUpload>>,
+    TError,
+    { id: number; data: BodyType<PatchUploadBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof patchUpload>>,
+  TError,
+  { id: number; data: BodyType<PatchUploadBody> },
+  TContext
+> => {
+  return useMutation(getPatchUploadMutationOptions(options));
+};
+
+/**
+ * @summary Get all instructors with analytics
+ */
+export const getGetInstructorsUrl = () => {
+  return `/api/instructors`;
+};
+
+export const getInstructors = async (
+  options?: RequestInit,
+): Promise<InstructorSummary[]> => {
+  return customFetch<InstructorSummary[]>(getGetInstructorsUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetInstructorsQueryKey = () => {
+  return [`/api/instructors`] as const;
+};
+
+export const getGetInstructorsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getInstructors>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getInstructors>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetInstructorsQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getInstructors>>> = ({
+    signal,
+  }) => getInstructors({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getInstructors>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetInstructorsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getInstructors>>
+>;
+export type GetInstructorsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get all instructors with analytics
+ */
+
+export function useGetInstructors<
+  TData = Awaited<ReturnType<typeof getInstructors>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getInstructors>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetInstructorsQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get per-instructor drill-down
+ */
+export const getGetInstructorUrl = (name: string) => {
+  return `/api/instructor/${name}`;
+};
+
+export const getInstructor = async (
+  name: string,
+  options?: RequestInit,
+): Promise<InstructorDetail> => {
+  return customFetch<InstructorDetail>(getGetInstructorUrl(name), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetInstructorQueryKey = (name: string) => {
+  return [`/api/instructor/${name}`] as const;
+};
+
+export const getGetInstructorQueryOptions = <
+  TData = Awaited<ReturnType<typeof getInstructor>>,
+  TError = ErrorType<unknown>,
+>(
+  name: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getInstructor>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetInstructorQueryKey(name);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getInstructor>>> = ({
+    signal,
+  }) => getInstructor(name, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!name,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getInstructor>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetInstructorQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getInstructor>>
+>;
+export type GetInstructorQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get per-instructor drill-down
+ */
+
+export function useGetInstructor<
+  TData = Awaited<ReturnType<typeof getInstructor>>,
+  TError = ErrorType<unknown>,
+>(
+  name: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getInstructor>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetInstructorQueryOptions(name, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get all topics with analytics
+ */
+export const getGetTopicsUrl = (params?: GetTopicsParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/topics?${stringifiedParams}`
+    : `/api/topics`;
+};
+
+export const getTopics = async (
+  params?: GetTopicsParams,
+  options?: RequestInit,
+): Promise<TopicSummary[]> => {
+  return customFetch<TopicSummary[]>(getGetTopicsUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetTopicsQueryKey = (params?: GetTopicsParams) => {
+  return [`/api/topics`, ...(params ? [params] : [])] as const;
+};
+
+export const getGetTopicsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getTopics>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetTopicsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getTopics>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetTopicsQueryKey(params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getTopics>>> = ({
+    signal,
+  }) => getTopics(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getTopics>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetTopicsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getTopics>>
+>;
+export type GetTopicsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get all topics with analytics
+ */
+
+export function useGetTopics<
+  TData = Awaited<ReturnType<typeof getTopics>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetTopicsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getTopics>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetTopicsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get per-topic drill-down
+ */
+export const getGetTopicUrl = (topicName: string) => {
+  return `/api/topic/${topicName}`;
+};
+
+export const getTopic = async (
+  topicName: string,
+  options?: RequestInit,
+): Promise<TopicDetail> => {
+  return customFetch<TopicDetail>(getGetTopicUrl(topicName), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetTopicQueryKey = (topicName: string) => {
+  return [`/api/topic/${topicName}`] as const;
+};
+
+export const getGetTopicQueryOptions = <
+  TData = Awaited<ReturnType<typeof getTopic>>,
+  TError = ErrorType<unknown>,
+>(
+  topicName: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getTopic>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetTopicQueryKey(topicName);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getTopic>>> = ({
+    signal,
+  }) => getTopic(topicName, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!topicName,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof getTopic>>, TError, TData> & {
+    queryKey: QueryKey;
+  };
+};
+
+export type GetTopicQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getTopic>>
+>;
+export type GetTopicQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get per-topic drill-down
+ */
+
+export function useGetTopic<
+  TData = Awaited<ReturnType<typeof getTopic>>,
+  TError = ErrorType<unknown>,
+>(
+  topicName: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getTopic>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetTopicQueryOptions(topicName, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}

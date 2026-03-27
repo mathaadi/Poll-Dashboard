@@ -29,6 +29,8 @@ export const GetSummaryResponse = zod.object({
     from: zod.string(),
     to: zod.string(),
   }),
+  total_instructors: zod.number(),
+  total_topics: zod.number(),
 });
 
 /**
@@ -48,6 +50,7 @@ export const GetSubjectsResponseItem = zod.object({
       content: zod.number(),
     }),
   ),
+  instructors: zod.array(zod.string()).optional(),
 });
 export const GetSubjectsResponse = zod.array(GetSubjectsResponseItem);
 
@@ -65,6 +68,8 @@ export const GetSubjectSessionsResponseItem = zod.object({
   total_responses: zod.number(),
   avg_delivery: zod.number(),
   avg_content: zod.number(),
+  instructor: zod.string().nullish(),
+  topic: zod.string().nullish(),
 });
 export const GetSubjectSessionsResponse = zod.array(
   GetSubjectSessionsResponseItem,
@@ -214,6 +219,9 @@ export const GetHistoryResponseItem = zod.object({
   upload_timestamp: zod.string(),
   session_type: zod.string(),
   meeting_topic: zod.string(),
+  format_version: zod.string().optional(),
+  instructor: zod.string().nullish(),
+  topic: zod.string().nullish(),
 });
 export const GetHistoryResponse = zod.array(GetHistoryResponseItem);
 
@@ -227,6 +235,8 @@ export const UploadCsvBody = zod.object({
   cohort: zod.string().optional(),
   semester: zod.string(),
   week_number: zod.string(),
+  instructor: zod.string().optional(),
+  topic: zod.string().optional(),
 });
 
 export const UploadCsvResponse = zod.object({
@@ -234,7 +244,128 @@ export const UploadCsvResponse = zod.object({
   upload_id: zod.number(),
   subject: zod.string(),
   total_responses: zod.number(),
-  avg_delivery_rating: zod.number(),
-  avg_content_rating: zod.number(),
+  avg_delivery_rating: zod.number().nullable(),
+  avg_content_rating: zod.number().nullable(),
   message: zod.string().optional(),
+  format: zod.string().optional(),
+  instructor: zod.string().nullish(),
+  topic: zod.string().nullish(),
+});
+
+/**
+ * @summary Update instructor and topic for an upload
+ */
+export const PatchUploadParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const PatchUploadBody = zod.object({
+  instructor: zod.string().nullish(),
+  topic: zod.string().nullish(),
+});
+
+export const PatchUploadResponse = zod.object({
+  success: zod.boolean(),
+});
+
+/**
+ * @summary Get all instructors with analytics
+ */
+export const GetInstructorsResponseItem = zod.object({
+  instructor: zod.string(),
+  total_sessions: zod.number(),
+  subjects: zod.array(zod.string()),
+  total_responses: zod.number(),
+  avg_rating: zod.number(),
+  avg_delivery: zod.number(),
+  avg_content: zod.number(),
+});
+export const GetInstructorsResponse = zod.array(GetInstructorsResponseItem);
+
+/**
+ * @summary Get per-instructor drill-down
+ */
+export const GetInstructorParams = zod.object({
+  name: zod.coerce.string(),
+});
+
+export const GetInstructorResponse = zod.object({
+  instructor: zod.string(),
+  total_sessions: zod.number(),
+  total_responses: zod.number(),
+  avg_rating: zod.number(),
+  avg_delivery: zod.number().optional(),
+  avg_content: zod.number().optional(),
+  by_subject: zod.record(
+    zod.string(),
+    zod.object({
+      avg: zod.number().optional(),
+      sessions: zod.number().optional(),
+    }),
+  ),
+  by_week: zod.array(
+    zod.object({
+      session_date: zod.string(),
+      subject: zod.string(),
+      avg_rating: zod.number(),
+      responses: zod.number(),
+    }),
+  ),
+  feedback_summary: zod.object({
+    positive: zod.number().optional(),
+    negative: zod.number().optional(),
+    suggestion: zod.number().optional(),
+    top_themes: zod.array(zod.string()).optional(),
+  }),
+});
+
+/**
+ * @summary Get all topics with analytics
+ */
+export const GetTopicsQueryParams = zod.object({
+  subject: zod.coerce.string().optional(),
+  instructor: zod.coerce.string().optional(),
+});
+
+export const GetTopicsResponseItem = zod.object({
+  topic: zod.string(),
+  subject: zod.string(),
+  instructor: zod.string().nullish(),
+  sessions: zod.number(),
+  total_responses: zod.number(),
+  avg_rating: zod.number(),
+  feedback_count: zod.number(),
+});
+export const GetTopicsResponse = zod.array(GetTopicsResponseItem);
+
+/**
+ * @summary Get per-topic drill-down
+ */
+export const GetTopicParams = zod.object({
+  topicName: zod.coerce.string(),
+});
+
+export const GetTopicResponse = zod.object({
+  topic: zod.string(),
+  subject: zod.string(),
+  instructor: zod.string().nullish(),
+  session_date: zod.string(),
+  total_responses: zod.number(),
+  avg_delivery: zod.number(),
+  avg_content: zod.number(),
+  distribution: zod.record(zod.string(), zod.number()),
+  nps: zod.number(),
+  feedback: zod.object({
+    useful: zod.number().optional(),
+    sentiment: zod
+      .object({
+        positive: zod.number(),
+        negative: zod.number(),
+        suggestion: zod.number(),
+        neutral: zod.number(),
+      })
+      .optional(),
+    top_issues: zod.array(zod.string()).optional(),
+    suggestions: zod.array(zod.string()).optional(),
+  }),
 });

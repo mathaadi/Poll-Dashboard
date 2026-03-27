@@ -194,15 +194,31 @@ export function SubjectDrilldown({ subject, onClose }: SubjectDrilldownProps) {
                       <thead className="bg-white/[0.03] border-b border-border/50">
                         <tr>
                           <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Session</th>
+                          <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Topic</th>
+                          <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Instructor</th>
                           <th className="px-4 py-3 text-center text-xs font-semibold text-muted-foreground uppercase tracking-wider">Delivery</th>
                           <th className="px-4 py-3 text-center text-xs font-semibold text-muted-foreground uppercase tracking-wider">Content</th>
                           <th className="px-4 py-3 text-center text-xs font-semibold text-muted-foreground uppercase tracking-wider">Responses</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {sessions.map((s, idx) => (
+                        {sessions.map((s) => (
                           <tr key={s.upload_id} className="border-b border-border/20">
                             <td className="px-4 py-3 text-white font-medium">{sessionLabel(s)}</td>
+                            <td className="px-4 py-3 text-muted-foreground">
+                              {(s as any).topic ? (
+                                <span className="text-white/80">{(s as any).topic}</span>
+                              ) : (
+                                <span className="italic opacity-40 text-xs">Not specified</span>
+                              )}
+                            </td>
+                            <td className="px-4 py-3 text-muted-foreground">
+                              {(s as any).instructor ? (
+                                <span className="text-white/80">{(s as any).instructor}</span>
+                              ) : (
+                                <span className="italic opacity-40 text-xs">Not specified</span>
+                              )}
+                            </td>
                             <td className="px-4 py-3 text-center text-white">{formatRating(s.avg_delivery)}</td>
                             <td className="px-4 py-3 text-center text-white">{formatRating(s.avg_content)}</td>
                             <td className="px-4 py-3 text-center text-muted-foreground">{s.total_responses}</td>
@@ -218,6 +234,8 @@ export function SubjectDrilldown({ subject, onClose }: SubjectDrilldownProps) {
                           return (
                             <tr className="bg-white/[0.02]">
                               <td className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase">Change</td>
+                              <td className="px-4 py-3" />
+                              <td className="px-4 py-3" />
                               <td className={cn("px-4 py-3 text-center text-xs font-bold", dDiff > 0 ? "text-green-400" : dDiff < 0 ? "text-red-400" : "text-muted-foreground")}>{fmt(dDiff)}</td>
                               <td className={cn("px-4 py-3 text-center text-xs font-bold", cDiff > 0 ? "text-green-400" : cDiff < 0 ? "text-red-400" : "text-muted-foreground")}>{fmt(cDiff)}</td>
                               <td className={cn("px-4 py-3 text-center text-xs font-bold", rDiff > 0 ? "text-green-400" : rDiff < 0 ? "text-red-400" : "text-muted-foreground")}>{rDiff > 0 ? `+${rDiff}` : rDiff}</td>

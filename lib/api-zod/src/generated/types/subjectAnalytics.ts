@@ -15,4 +15,5 @@ export interface SubjectAnalytics {
   avg_content: number;
   nps: number;
   trend: SubjectTrendPoint[];
+  instructors?: string[];
 }

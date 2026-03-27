@@ -6,13 +6,12 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface SubjectSession {
-  upload_id: number;
-  session_date: string;
-  week_number: string;
+export interface InstructorSummary {
+  instructor: string;
+  total_sessions: number;
+  subjects: string[];
   total_responses: number;
+  avg_rating: number;
   avg_delivery: number;
   avg_content: number;
-  instructor?: string | null;
-  topic?: string | null;
 }

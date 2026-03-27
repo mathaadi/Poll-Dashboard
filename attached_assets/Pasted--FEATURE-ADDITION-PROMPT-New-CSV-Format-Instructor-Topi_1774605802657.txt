@@ -1,0 +1,477 @@
+# ➕ FEATURE ADDITION PROMPT — New CSV Format + Instructor & Topic Analysis
+
+> ⚠️ Do NOT rebuild the app. Do NOT change existing working code unless explicitly listed here.
+> These are ADDITIVE changes only. The existing Zoom CSV format must continue to work.
+> The app must support BOTH CSV formats going forward.
+
+---
+
+## CONTEXT — TWO CSV FORMATS NOW EXIST
+
+The app currently handles **Format A** (Zoom export with 9-row header preamble).
+A new **Format B** is now also supported — it is a flat CSV with column headers on Row 1.
+
+The app must auto-detect which format is uploaded and parse accordingly.
+Both formats store data in the same DB tables — no separate storage.
+
+---
+
+## FORMAT B — EXACT COLUMN STRUCTURE
+
+Format B CSV has column headers on **Row 1** (no preamble rows):
+
+| Col Index | Column Name (as in header) | Description |
+|-----------|---------------------------|-------------|
+| 0 | `User Name` | Student full name |
+| 1 | `Email Address` | Student email |
+| 2 | `Submitted` | Submission timestamp |
+| 3 | `Collected` | Collection/session timestamp |
+| 4 | `Topic/Name` | Topic of the session (e.g. "Introduction to ML", "Decision Trees") |
+| 5 | `Meeting/Webinar ID` | Unique meeting ID — used for duplicate detection (same as Format A) |
+| 6 | `Session Rating` | Single numeric rating 1–5 (replaces the two separate delivery/content ratings) |
+| 7 | `Instructor` | Instructor/trainer name (e.g. "Dr. Sharma", "Prof. Verma") |
+| 8 | `How was the session` | Free text feedback — qualitative question (equivalent to Format A's feedback column) |
+| 9 | `Any additional feedback` | Additional free text comments (new — store separately) |
+
+### Format B Parsing Rules:
+1. Row 1 = header row (contains `User Name`, `Email Address`, etc.)
+2. Rows 2+ = data rows — one row per student response
+3. No metadata rows — subject/program info comes from the upload form (user fills in manually, same as today)
+4. `Meeting/Webinar ID` in column 5 = use for duplicate detection (same UNIQUE constraint)
+5. `Session Rating` is a single value (1–5) — store in both `delivery_rating` AND `content_rating` columns (same value) so existing dashboard charts work without changes
+6. `Topic/Name` = the specific topic taught in that session — store in new `topic` column
+7. `Instructor` = teacher name — store in new `instructor` column
+8. `How was the session` = primary feedback text — map to existing `feedback_text` column
+9. `Any additional feedback` = secondary feedback — store in new `additional_feedback` column
+10. `Submitted` = use as `submission_time`
+11. `Collected` = store as session timestamp if `session_date` is not determinable otherwise
+
+### Auto-Detection Logic (add to `csvParser.js`):
+```javascript
+function detectCSVFormat(fileContent) {
+  const firstLine = fileContent.split('\n')[0].toLowerCase();
+  
+  // Format B has 'user name' or 'instructor' on the very first line
+  if (firstLine.includes('instructor') || firstLine.includes('topic/name') || firstLine.includes('session rating')) {
+    return 'FORMAT_B';
+  }
+  
+  // Format A has 'overview' on the first line
+  if (firstLine.includes('overview')) {
+    return 'FORMAT_A';
+  }
+  
+  // Fallback: check if row 1 looks like headers (contains 'user name' within first 3 lines)
+  const first3Lines = fileContent.split('\n').slice(0, 3).join('\n').toLowerCase();
+  if (first3Lines.includes('user name') && first3Lines.includes('email')) {
+    return 'FORMAT_B';
+  }
+  
+  return 'FORMAT_A'; // default to existing format
+}
+```
+
+---
+
+## DATABASE CHANGES
+
+### Add columns to `uploads` table:
+```sql
+-- Safe migrations — add only if not exists
+ALTER TABLE uploads ADD COLUMN format_version TEXT DEFAULT 'A';
+ALTER TABLE uploads ADD COLUMN instructor TEXT;
+ALTER TABLE uploads ADD COLUMN topic TEXT;
+```
+
+### Add columns to `poll_responses` table:
+```sql
+ALTER TABLE poll_responses ADD COLUMN instructor TEXT;
+ALTER TABLE poll_responses ADD COLUMN topic TEXT;
+ALTER TABLE poll_responses ADD COLUMN additional_feedback TEXT;
+ALTER TABLE poll_responses ADD COLUMN additional_sentiment TEXT;
+ALTER TABLE poll_responses ADD COLUMN additional_themes TEXT;
+```
+
+### Add all 5 migrations safely in `database.js` `initDB()`:
+```javascript
+const migrations = [
+  `ALTER TABLE uploads ADD COLUMN format_version TEXT DEFAULT 'A'`,
+  `ALTER TABLE uploads ADD COLUMN instructor TEXT`,
+  `ALTER TABLE uploads ADD COLUMN topic TEXT`,
+  `ALTER TABLE poll_responses ADD COLUMN instructor TEXT`,
+  `ALTER TABLE poll_responses ADD COLUMN topic TEXT`,
+  `ALTER TABLE poll_responses ADD COLUMN additional_feedback TEXT`,
+  `ALTER TABLE poll_responses ADD COLUMN additional_sentiment TEXT`,
+  `ALTER TABLE poll_responses ADD COLUMN additional_themes TEXT`,
+];
+
+for (const migration of migrations) {
+  try { db.exec(migration); } catch(e) { /* column already exists — ignore */ }
+}
+```
+
+---
+
+## BACKEND CHANGES
+
+### 1. Update `csvParser.js` — Add Format B Parser
+
+Add a new function `parseFormatB(fileContent)` alongside the existing `parseFormatA`:
+
+```javascript
+function parseFormatB(fileContent) {
+  const lines = fileContent.split(/\r?\n/).filter(l => l.trim());
+  
+  // Row 0 = headers, find column indices dynamically
+  const headers = parseCSVLine(lines[0]).map(h => h.toLowerCase().trim());
+  
+  const idx = {
+    userName:        headers.findIndex(h => h.includes('user name')),
+    email:           headers.findIndex(h => h.includes('email')),
+    submitted:       headers.findIndex(h => h.includes('submitted')),
+    collected:       headers.findIndex(h => h.includes('collected')),
+    topic:           headers.findIndex(h => h.includes('topic')),
+    meetingId:       headers.findIndex(h => h.includes('meeting')),
+    sessionRating:   headers.findIndex(h => h.includes('session rating') || h.includes('rating')),
+    instructor:      headers.findIndex(h => h.includes('instructor')),
+    feedback:        headers.findIndex(h => h.includes('how was')),
+    additionalFeedback: headers.findIndex(h => h.includes('additional')),
+  };
+  
+  const metadata = {
+    meetingId: null,
+    sessionDate: null,
+    subject: null,     // Will be filled from upload form
+    sessionType: null, // Will be filled from upload form
+    format: 'FORMAT_B',
+    instructor: null,  // Will be extracted from most common value in rows
+    topic: null,       // Will be extracted from most common value in rows
+  };
+  
+  const responses = [];
+  
+  for (let i = 1; i < lines.length; i++) {
+    const cols = parseCSVLine(lines[i]);
+    if (!cols || cols.length < 3) continue;
+    
+    const meetingId = idx.meetingId >= 0 ? cols[idx.meetingId]?.trim() : null;
+    if (!metadata.meetingId && meetingId) metadata.meetingId = meetingId;
+    
+    const sessionDate = idx.collected >= 0 ? cols[idx.collected]?.trim() : 
+                        idx.submitted >= 0 ? cols[idx.submitted]?.trim() : null;
+    if (!metadata.sessionDate && sessionDate) metadata.sessionDate = sessionDate;
+    
+    const ratingRaw = idx.sessionRating >= 0 ? cols[idx.sessionRating]?.trim() : null;
+    const rating = ratingRaw ? parseInt(ratingRaw) : null;
+    
+    const instructor = idx.instructor >= 0 ? cols[idx.instructor]?.trim() : null;
+    const topic = idx.topic >= 0 ? cols[idx.topic]?.trim() : null;
+    
+    responses.push({
+      studentName:        idx.userName >= 0 ? cols[idx.userName]?.trim() : null,
+      studentEmail:       idx.email >= 0 ? cols[idx.email]?.trim() : null,
+      submissionTime:     idx.submitted >= 0 ? cols[idx.submitted]?.trim() : null,
+      deliveryRating:     rating,    // Same value for both
+      contentRating:      rating,    // Same value for both (single rating format)
+      feedbackText:       idx.feedback >= 0 ? cols[idx.feedback]?.trim() : null,
+      additionalFeedback: idx.additionalFeedback >= 0 ? cols[idx.additionalFeedback]?.trim() : null,
+      instructor:         instructor,
+      topic:              topic,
+    });
+  }
+  
+  // Extract dominant instructor and topic from responses (most frequently occurring)
+  const instructorCounts = {};
+  const topicCounts = {};
+  responses.forEach(r => {
+    if (r.instructor) instructorCounts[r.instructor] = (instructorCounts[r.instructor] || 0) + 1;
+    if (r.topic) topicCounts[r.topic] = (topicCounts[r.topic] || 0) + 1;
+  });
+  metadata.instructor = Object.entries(instructorCounts).sort((a,b) => b[1]-a[1])[0]?.[0] || null;
+  metadata.topic = Object.entries(topicCounts).sort((a,b) => b[1]-a[1])[0]?.[0] || null;
+  
+  return { metadata, responses };
+}
+```
+
+### 2. Update Upload Route (`upload.js`)
+
+In the upload handler, after detecting format:
+- Call `parseFormatA` or `parseFormatB` based on detection
+- When inserting into `uploads` table, also insert `instructor`, `topic`, `format_version`
+- When inserting into `poll_responses`, also insert `instructor`, `topic`, `additional_feedback`
+- Run NLP on `additional_feedback` as well (same `classifyFeedback` function) → store in `additional_sentiment`, `additional_themes`
+- For Format B, override/pre-fill `instructor` and `topic` from metadata if available. Also allow the upload form to override with manually entered values (form fields below).
+
+### 3. Upload Form — Add Two New Optional Fields
+
+Add to the upload form in `UploadPage.jsx`:
+
+```
+[ Program Name*        ▼ ]
+[ Session Type*   ○ Practical  ○ Theory ]
+[ Semester/Module*     _______ ]
+[ Week Number*         _______ ]
+[ Instructor Name      _______ ]  ← NEW (optional — auto-filled from CSV if Format B)
+[ Topic / Chapter      _______ ]  ← NEW (optional — auto-filled from CSV if Format B)
+```
+
+- Both fields are **optional**
+- For Format B uploads: pre-fill these fields from the parsed CSV values (but allow user to override)
+- For Format A uploads: leave blank (user can manually enter if needed)
+- Add helper text under Topic field: *"E.g. Decision Trees, SQL Joins, Linear Regression"*
+
+---
+
+## NEW API ENDPOINTS (Add to `dashboard.js`)
+
+### Instructor List
+```
+GET /api/instructors
+Response: [
+  {
+    "instructor": "Dr. Sharma",
+    "total_sessions": 3,
+    "subjects": ["ATA", "BDA"],
+    "total_responses": 412,
+    "avg_rating": 4.42,
+    "avg_delivery": 4.45,
+    "avg_content": 4.39
+  },
+  ...
+]
+```
+
+### Per-Instructor Drill-Down
+```
+GET /api/instructor/:name
+Response: {
+  "instructor": "Dr. Sharma",
+  "total_sessions": 3,
+  "total_responses": 412,
+  "avg_rating": 4.42,
+  "by_subject": { "ATA": { "avg": 4.45, "sessions": 2 }, "BDA": { "avg": 4.39, "sessions": 1 } },
+  "by_week": [
+    { "session_date": "2026-02-07", "subject": "ATA", "avg_rating": 4.36, "responses": 161 },
+    { "session_date": "2026-03-07", "subject": "ATA", "avg_rating": 4.48, "responses": 244 }
+  ],
+  "feedback_summary": {
+    "positive": 9, "negative": 5, "suggestion": 3,
+    "top_themes": ["pace", "delivery", "content"]
+  }
+}
+```
+
+### Topic List
+```
+GET /api/topics?subject=ATA
+Response: [
+  {
+    "topic": "Decision Trees",
+    "subject": "ATA",
+    "instructor": "Dr. Sharma",
+    "sessions": 1,
+    "total_responses": 161,
+    "avg_rating": 4.36,
+    "feedback_count": 18
+  },
+  ...
+]
+```
+
+### Per-Topic Drill-Down
+```
+GET /api/topic/:topicName
+Response: {
+  "topic": "Decision Trees",
+  "subject": "ATA",
+  "instructor": "Dr. Sharma",
+  "session_date": "2026-02-07",
+  "total_responses": 161,
+  "avg_delivery": 4.36,
+  "avg_content": 4.37,
+  "distribution": { "1": 2, "2": 3, "3": 17, "4": 52, "5": 87 },
+  "nps": 52.8,
+  "feedback": {
+    "useful": 18,
+    "sentiment": { "positive": 9, "negative": 5, "suggestion": 4 },
+    "top_issues": ["voice was breaking", "too fast"],
+    "suggestions": ["slow down the pace"]
+  }
+}
+```
+
+### Update existing `/api/summary` to include instructor/topic counts:
+```json
+{
+  "total_sessions": 7,
+  "total_responses": 1421,
+  ...existing fields...,
+  "total_instructors": 3,
+  "total_topics": 12
+}
+```
+
+---
+
+## DASHBOARD UI CHANGES
+
+### 1. Add Two New Top-Level Tabs to Dashboard
+
+Current tabs: `[Overview] [Subjects] [Trends] [Cohorts] [Feedback]`
+New tabs:     `[Overview] [Subjects] [Trends] [Cohorts] [Instructors] [Topics] [Feedback]`
+
+### 2. New Tab: Instructors
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ 👨‍🏫 Instructor Analysis                                      │
+│─────────────────────────────────────────────────────────────│
+│                                                              │
+│  [Search instructor...  🔍]                                  │
+│                                                              │
+│  ┌──────────────────┐ ┌──────────────────┐                  │
+│  │ Dr. Sharma        │ │ Prof. Verma       │                 │
+│  │ Subjects: ATA,BDA │ │ Subjects: FSP     │                 │
+│  │ Sessions: 3       │ │ Sessions: 2       │                 │
+│  │ Responses: 412    │ │ Responses: 426    │                 │
+│  │ Avg Rating: 4.42 ⭐│ │ Avg Rating: 4.41 ⭐│                │
+│  │ [View Details →]  │ │ [View Details →]  │                 │
+│  └──────────────────┘ └──────────────────┘                  │
+│                                                              │
+│  Instructor Comparison (Bar Chart)                           │
+│  Dr. Sharma  ████████████ 4.42                               │
+│  Prof. Verma ████████████ 4.41                               │
+│  Dr. Singh   ████████████ 4.35                               │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Instructor drill-down panel** (same ✕ close + Escape pattern as Subject drill-down):
+- Rating trend over time (their sessions in chronological order)
+- Subject breakdown (how their different subjects compare)
+- Feedback sentiment for their sessions
+- Top feedback themes for their sessions
+- Session history table
+
+### 3. New Tab: Topics
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ 📚 Topic Analysis                                            │
+│─────────────────────────────────────────────────────────────│
+│                                                              │
+│  Filter by: [All Subjects ▼]  [All Instructors ▼]           │
+│                                                              │
+│  Topics sorted by: [Rating ▼]                                │
+│                                                              │
+│  Topic                  Subject  Instructor  Rating  Resp.  │
+│  ────────────────────────────────────────────────────────── │
+│  Decision Trees         ATA      Dr. Sharma  4.42 ⭐  161   │
+│  Neural Networks        ATA      Dr. Sharma  4.38 ⭐  244   │
+│  SQL Advanced           BDA      Prof. Verma 4.35 ⭐  168   │
+│  Flask Fundamentals     FSP      Dr. Singh   4.41 ⭐  189   │
+│  ...                                                         │
+│                                                              │
+│  [Click any row → opens topic drill-down panel]             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Topic drill-down panel** (same ✕ / Escape pattern):
+- Rating distribution bar chart
+- NPS score badge
+- Instructor who taught it
+- Feedback sentiment breakdown
+- Top issues and suggestions specific to that topic
+
+### 4. Update Overview Tab KPI Cards
+
+Add 2 more KPI cards after the existing 6:
+
+```
+[Sessions] [Responses] [Avg Delivery] [Avg Content] [Combined] [Feedback] [Instructors] [Topics]
+```
+
+The 2 new cards:
+- 👨‍🏫 Instructors (count of unique instructors)
+- 📚 Topics Covered (count of unique topics)
+
+### 5. Update Subject Drill-Down Panel
+
+Inside the existing subject drill-down panel, add a new section:
+
+```
+Sessions for this Subject
+─────────────────────────────────
+Date         Topic              Instructor      Rating  Responses
+Feb 07       Decision Trees     Dr. Sharma      4.36    161
+Mar 07       Neural Networks    Dr. Sharma      4.48    244
+```
+
+This gives context on what was taught and who taught it per session.
+
+---
+
+## CROSS-FILTERING BEHAVIOR
+
+When user selects a filter in one dimension, other views should reflect it:
+- On Instructors tab → clicking an instructor card → show their topics in Topics tab (add a cross-link button: "See Topics by Dr. Sharma →")
+- On Topics tab → clicking a topic → show "Taught by [Instructor]" with a link to their profile
+- On Subjects tab → subject card shows instructor names who have taught this subject
+- All drill-down panels have a "Related" section at the bottom linking to instructor and topic views
+
+---
+
+## GRACEFUL HANDLING — MISSING DATA
+
+Many existing Format A sessions will NOT have instructor or topic data. Handle this:
+- In the Instructors tab: show a banner "X sessions have no instructor assigned. You can edit them from Upload History."
+- In the Topics tab: filter toggle → `[Show All] [With Topics Only]` — default to "With Topics Only" so the table isn't cluttered with null topics
+- In KPI cards: "3 instructors" only counts non-null values
+- In Subject drill-down table: show "Not specified" for sessions without instructor/topic — in gray italic
+- In API responses: never return null instructor/topic as a category — omit from groupings unless specifically requested
+
+### Allow Editing After Upload:
+Add an **Edit** button (pencil icon) on each row in the Upload History table.
+Clicking edit opens a small modal to update: `Instructor Name` and `Topic/Chapter` for that session.
+These are the only two fields editable after upload (everything else is locked).
+
+API endpoint for this:
+```
+PATCH /api/upload/:id
+Body: { "instructor": "Dr. Sharma", "topic": "Decision Trees" }
+Response: { "success": true }
+```
+
+On save → update both `uploads` table AND all `poll_responses` rows for that `upload_id`.
+
+---
+
+## FILES TO MODIFY (Minimum Surface Area)
+
+| File | Change |
+|------|--------|
+| `src/database.js` | Add 8 safe column migrations |
+| `src/services/csvParser.js` | Add `detectCSVFormat()` + `parseFormatB()` functions |
+| `src/routes/upload.js` | Use format detection, call correct parser, save instructor/topic to DB, add `PATCH /api/upload/:id` |
+| `src/routes/dashboard.js` | Add 4 new GET endpoints; update `/api/summary` |
+| `client/src/pages/UploadPage.jsx` | Add Instructor Name + Topic fields to form |
+| `client/src/pages/DashboardPage.jsx` | Add 2 new tabs (Instructors, Topics); add 2 KPI cards; update Overview tab |
+| `client/src/components/DrillDown.jsx` | Add session table with instructor/topic columns |
+
+Do NOT modify: NLP logic, existing chart components, auth (none exists), SQLite schema beyond listed migrations.
+
+---
+
+## VERIFICATION CHECKLIST
+
+- [ ] Upload a Format B CSV → parses without error
+- [ ] Upload a Format A CSV → still parses correctly (no regression)
+- [ ] Format B upload → `instructor` and `topic` appear in Upload History table
+- [ ] Instructors tab → shows instructor cards
+- [ ] Instructor with no data (Format A) → not shown in tab (or shown as "Unassigned")
+- [ ] Topics tab → shows topic list with filter by subject/instructor
+- [ ] Click a topic row → drill-down panel opens with ✕ close button
+- [ ] Edit pencil on Upload History → can update instructor/topic for old Format A sessions
+- [ ] Overview KPI cards → shows Instructors count + Topics count
+- [ ] Subject drill-down → session table shows topic + instructor columns
+- [ ] Cross-link: "See Topics by X" → navigates to Topics tab pre-filtered

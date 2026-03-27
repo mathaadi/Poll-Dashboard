@@ -13,4 +13,6 @@ export type UploadCsvBody = {
   cohort?: string;
   semester: string;
   week_number: string;
+  instructor?: string;
+  topic?: string;
 };

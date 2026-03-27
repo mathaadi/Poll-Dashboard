@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
 import { uploadsTable, pollResponsesTable } from "@workspace/db/schema";
-import { eq, sql } from "drizzle-orm";
+import { eq, sql, isNotNull } from "drizzle-orm";
 import { computeDistribution, computeNPS } from "../services/metrics.js";
 
 const router: IRouter = Router();
@@ -20,6 +20,8 @@ router.get("/summary", async (_req, res) => {
       subjects: [],
       programs: [],
       date_range: { from: "", to: "" },
+      total_instructors: 0,
+      total_topics: 0,
     });
   }
 
@@ -45,6 +47,9 @@ router.get("/summary", async (_req, res) => {
     .map((u) => u.session_date!)
     .sort();
 
+  const instructors = [...new Set(uploads.map((u) => u.instructor).filter(Boolean))];
+  const topics = [...new Set(uploads.map((u) => u.topic).filter(Boolean))];
+
   return res.json({
     total_sessions: uploads.length,
     total_responses,
@@ -57,6 +62,8 @@ router.get("/summary", async (_req, res) => {
       from: dates[0] || "",
       to: dates[dates.length - 1] || "",
     },
+    total_instructors: instructors.length,
+    total_topics: topics.length,
   });
 });
 
@@ -108,6 +115,8 @@ router.get("/subjects", async (_req, res) => {
         content: Math.round((s.avg_content_rating || 0) * 100) / 100,
       }));
 
+      const instructors = [...new Set(sessions.map((s) => s.instructor).filter(Boolean))];
+
       return {
         subject,
         total_sessions: sessions.length,
@@ -116,6 +125,7 @@ router.get("/subjects", async (_req, res) => {
         avg_content: Math.round(avg_content * 100) / 100,
         nps,
         trend,
+        instructors,
       };
     })
   );
@@ -142,6 +152,8 @@ router.get("/subject-sessions", async (req, res) => {
       total_responses: u.total_responses || 0,
       avg_delivery: Math.round((u.avg_delivery_rating || 0) * 100) / 100,
       avg_content: Math.round((u.avg_content_rating || 0) * 100) / 100,
+      instructor: u.instructor || null,
+      topic: u.topic || null,
     }));
 
   return res.json(result);
@@ -262,7 +274,7 @@ async function getFilteredResponses(
   );
 }
 
-// GET /api/distribution?subject=X&type=delivery|content&upload_id=N
+// GET /api/distribution/overall
 router.get("/distribution/overall", async (_req, res) => {
   const responses = await db.select().from(pollResponsesTable);
 
@@ -283,6 +295,7 @@ router.get("/distribution/overall", async (_req, res) => {
   });
 });
 
+// GET /api/distribution
 router.get("/distribution", async (req, res) => {
   const subject = req.query.subject as string | undefined;
   const type = (req.query.type as string) || "delivery";
@@ -343,7 +356,7 @@ router.get("/feedback/overview", async (_req, res) => {
   return res.json({ total_useful, sentiment_counts, sentiment_percent, top_themes });
 });
 
-// GET /api/feedback?subject=X&upload_id=N
+// GET /api/feedback
 router.get("/feedback", async (req, res) => {
   const subject = req.query.subject as string | undefined;
   const upload_id = req.query.upload_id ? Number(req.query.upload_id) : undefined;
@@ -384,8 +397,7 @@ router.get("/feedback", async (req, res) => {
     .sort((a, b) => b[1] - a[1])
     .map(([theme, count]) => ({ theme, count }));
 
-  // Show translated text where available, otherwise original
-  const displayText = (r: typeof usefulResponses[0]) =>
+  const displayText = (r: (typeof usefulResponses)[0]) =>
     r.translated_text || r.feedback_text || "";
 
   const top_negative = usefulResponses
@@ -433,8 +445,346 @@ router.get("/history", async (_req, res) => {
       upload_timestamp: u.upload_timestamp || "",
       session_type: u.session_type,
       meeting_topic: u.meeting_topic || "",
+      format_version: u.format_version || "A",
+      instructor: u.instructor || null,
+      topic: u.topic || null,
     }))
   );
+});
+
+// GET /api/instructors
+router.get("/instructors", async (_req, res) => {
+  const uploads = await db.select().from(uploadsTable);
+  const responses = await db.select().from(pollResponsesTable);
+
+  const uploadMap = new Map(uploads.map((u) => [u.id, u]));
+
+  const instructorMap = new Map<
+    string,
+    {
+      sessions: typeof uploads;
+      responses: typeof responses;
+    }
+  >();
+
+  for (const u of uploads) {
+    if (!u.instructor) continue;
+    if (!instructorMap.has(u.instructor)) {
+      instructorMap.set(u.instructor, { sessions: [], responses: [] });
+    }
+    instructorMap.get(u.instructor)!.sessions.push(u);
+  }
+
+  for (const r of responses) {
+    const upload = uploadMap.get(r.upload_id || -1);
+    if (!upload?.instructor) continue;
+    if (!instructorMap.has(upload.instructor)) continue;
+    instructorMap.get(upload.instructor)!.responses.push(r);
+  }
+
+  const result = [...instructorMap.entries()].map(([instructor, data]) => {
+    const subjects = [...new Set(data.sessions.map((s) => s.subject))];
+    const validDelivery = data.responses
+      .map((r) => r.delivery_rating)
+      .filter((r): r is number => r !== null);
+    const validContent = data.responses
+      .map((r) => r.content_rating)
+      .filter((r): r is number => r !== null);
+    const avg_delivery =
+      validDelivery.length > 0
+        ? Math.round((validDelivery.reduce((a, b) => a + b, 0) / validDelivery.length) * 100) / 100
+        : 0;
+    const avg_content =
+      validContent.length > 0
+        ? Math.round((validContent.reduce((a, b) => a + b, 0) / validContent.length) * 100) / 100
+        : 0;
+    const avg_rating = Math.round(((avg_delivery + avg_content) / 2) * 100) / 100;
+
+    return {
+      instructor,
+      total_sessions: data.sessions.length,
+      subjects,
+      total_responses: data.responses.length,
+      avg_rating,
+      avg_delivery,
+      avg_content,
+    };
+  });
+
+  result.sort((a, b) => b.avg_rating - a.avg_rating);
+  return res.json(result);
+});
+
+// GET /api/instructor/:name
+router.get("/instructor/:name", async (req, res) => {
+  const instructor = decodeURIComponent(req.params.name);
+
+  const uploads = await db
+    .select()
+    .from(uploadsTable)
+    .where(eq(uploadsTable.instructor, instructor));
+
+  if (uploads.length === 0) {
+    return res.status(404).json({ error: "Instructor not found" });
+  }
+
+  const uploadIds = uploads.map((u) => u.id);
+  const responses =
+    uploadIds.length === 1
+      ? await db.select().from(pollResponsesTable).where(eq(pollResponsesTable.upload_id, uploadIds[0]))
+      : await db
+          .select()
+          .from(pollResponsesTable)
+          .where(
+            sql`${pollResponsesTable.upload_id} IN (${sql.join(
+              uploadIds.map((id) => sql`${id}`),
+              sql`, `
+            )})`
+          );
+
+  const validDelivery = responses.map((r) => r.delivery_rating).filter((r): r is number => r !== null);
+  const validContent = responses.map((r) => r.content_rating).filter((r): r is number => r !== null);
+  const avg_delivery =
+    validDelivery.length > 0
+      ? Math.round((validDelivery.reduce((a, b) => a + b, 0) / validDelivery.length) * 100) / 100
+      : 0;
+  const avg_content =
+    validContent.length > 0
+      ? Math.round((validContent.reduce((a, b) => a + b, 0) / validContent.length) * 100) / 100
+      : 0;
+  const avg_rating = Math.round(((avg_delivery + avg_content) / 2) * 100) / 100;
+
+  const bySubject: Record<string, { avg: number; sessions: number }> = {};
+  const subjectMap = new Map<string, number[]>();
+  for (const u of uploads) {
+    if (!subjectMap.has(u.subject)) subjectMap.set(u.subject, []);
+    if (u.avg_combined_rating !== null) subjectMap.get(u.subject)!.push(u.avg_combined_rating);
+  }
+  for (const [subj, ratings] of subjectMap.entries()) {
+    bySubject[subj] = {
+      avg: ratings.length > 0 ? Math.round((ratings.reduce((a, b) => a + b, 0) / ratings.length) * 100) / 100 : 0,
+      sessions: uploads.filter((u) => u.subject === subj).length,
+    };
+  }
+
+  const byWeek = uploads
+    .sort((a, b) => (a.session_date || "").localeCompare(b.session_date || ""))
+    .map((u) => ({
+      session_date: u.session_date || "",
+      subject: u.subject,
+      avg_rating: Math.round((u.avg_combined_rating || 0) * 100) / 100,
+      responses: u.total_responses || 0,
+    }));
+
+  const usefulResponses = responses.filter((r) => r.is_useful_feedback === 1);
+  const sentiment = { positive: 0, negative: 0, suggestion: 0, neutral: 0 };
+  const themeCount = new Map<string, number>();
+  for (const r of usefulResponses) {
+    const s = r.feedback_sentiment as keyof typeof sentiment;
+    if (s && s in sentiment) sentiment[s]++;
+    if (r.feedback_themes) {
+      for (const t of r.feedback_themes.split(",")) {
+        const trimmed = t.trim();
+        if (trimmed) themeCount.set(trimmed, (themeCount.get(trimmed) || 0) + 1);
+      }
+    }
+  }
+  const top_themes = [...themeCount.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([t]) => t);
+
+  return res.json({
+    instructor,
+    total_sessions: uploads.length,
+    total_responses: responses.length,
+    avg_rating,
+    avg_delivery,
+    avg_content,
+    by_subject: bySubject,
+    by_week: byWeek,
+    feedback_summary: {
+      positive: sentiment.positive,
+      negative: sentiment.negative,
+      suggestion: sentiment.suggestion,
+      top_themes,
+    },
+  });
+});
+
+// GET /api/topics?subject=X&instructor=Y
+router.get("/topics", async (req, res) => {
+  const subject = req.query.subject as string | undefined;
+  const instructor = req.query.instructor as string | undefined;
+
+  let uploads = await db.select().from(uploadsTable);
+
+  if (subject) uploads = uploads.filter((u) => u.subject === subject);
+  if (instructor) uploads = uploads.filter((u) => u.instructor === instructor);
+
+  // Only sessions with a topic
+  const withTopic = uploads.filter((u) => u.topic);
+
+  const topicMap = new Map<
+    string,
+    { uploads: typeof uploads; responses_count: number }
+  >();
+
+  for (const u of withTopic) {
+    const key = u.topic!;
+    if (!topicMap.has(key)) topicMap.set(key, { uploads: [], responses_count: 0 });
+    topicMap.get(key)!.uploads.push(u);
+    topicMap.get(key)!.responses_count += u.total_responses || 0;
+  }
+
+  const uploadIds = withTopic.map((u) => u.id);
+  const allResponses =
+    uploadIds.length === 0
+      ? []
+      : uploadIds.length === 1
+      ? await db.select().from(pollResponsesTable).where(eq(pollResponsesTable.upload_id, uploadIds[0]))
+      : await db
+          .select()
+          .from(pollResponsesTable)
+          .where(
+            sql`${pollResponsesTable.upload_id} IN (${sql.join(
+              uploadIds.map((id) => sql`${id}`),
+              sql`, `
+            )})`
+          );
+
+  const uploadMap = new Map(withTopic.map((u) => [u.id, u]));
+  const topicFeedbackCount = new Map<string, number>();
+  for (const r of allResponses) {
+    const u = uploadMap.get(r.upload_id || -1);
+    if (!u?.topic) continue;
+    if (r.is_useful_feedback === 1) {
+      topicFeedbackCount.set(u.topic, (topicFeedbackCount.get(u.topic) || 0) + 1);
+    }
+  }
+
+  const result = [...topicMap.entries()].map(([topic, data]) => {
+    const sessions = data.uploads;
+    const avgRating =
+      sessions.filter((s) => s.avg_combined_rating !== null).length > 0
+        ? Math.round(
+            (sessions
+              .filter((s) => s.avg_combined_rating !== null)
+              .reduce((sum, s) => sum + (s.avg_combined_rating || 0), 0) /
+              sessions.filter((s) => s.avg_combined_rating !== null).length) *
+              100
+          ) / 100
+        : 0;
+
+    return {
+      topic,
+      subject: sessions[0]?.subject || "",
+      instructor: sessions[0]?.instructor || null,
+      sessions: sessions.length,
+      total_responses: data.responses_count,
+      avg_rating: avgRating,
+      feedback_count: topicFeedbackCount.get(topic) || 0,
+    };
+  });
+
+  result.sort((a, b) => b.avg_rating - a.avg_rating);
+  return res.json(result);
+});
+
+// GET /api/topic/:topicName
+router.get("/topic/:topicName", async (req, res) => {
+  const topicName = decodeURIComponent(req.params.topicName);
+
+  const uploads = await db
+    .select()
+    .from(uploadsTable)
+    .where(eq(uploadsTable.topic, topicName));
+
+  if (uploads.length === 0) {
+    return res.status(404).json({ error: "Topic not found" });
+  }
+
+  const uploadIds = uploads.map((u) => u.id);
+  const responses =
+    uploadIds.length === 1
+      ? await db.select().from(pollResponsesTable).where(eq(pollResponsesTable.upload_id, uploadIds[0]))
+      : await db
+          .select()
+          .from(pollResponsesTable)
+          .where(
+            sql`${pollResponsesTable.upload_id} IN (${sql.join(
+              uploadIds.map((id) => sql`${id}`),
+              sql`, `
+            )})`
+          );
+
+  const deliveryRatings = responses.map((r) => r.delivery_rating);
+  const contentRatings = responses.map((r) => r.content_rating);
+  const combined = responses.map((r) =>
+    r.delivery_rating !== null && r.content_rating !== null
+      ? (r.delivery_rating + r.content_rating) / 2
+      : r.delivery_rating ?? r.content_rating ?? null
+  );
+
+  const validDelivery = deliveryRatings.filter((r): r is number => r !== null);
+  const validContent = contentRatings.filter((r): r is number => r !== null);
+  const avg_delivery =
+    validDelivery.length > 0
+      ? Math.round((validDelivery.reduce((a, b) => a + b, 0) / validDelivery.length) * 100) / 100
+      : 0;
+  const avg_content =
+    validContent.length > 0
+      ? Math.round((validContent.reduce((a, b) => a + b, 0) / validContent.length) * 100) / 100
+      : 0;
+
+  const distribution = computeDistribution(combined);
+  const nps = computeNPS(combined);
+
+  const usefulResponses = responses.filter((r) => r.is_useful_feedback === 1);
+  const sentiment = { positive: 0, negative: 0, suggestion: 0, neutral: 0 };
+  const themeCount = new Map<string, number>();
+  for (const r of usefulResponses) {
+    const s = r.feedback_sentiment as keyof typeof sentiment;
+    if (s && s in sentiment) sentiment[s]++;
+    if (r.feedback_themes) {
+      for (const t of r.feedback_themes.split(",")) {
+        const trimmed = t.trim();
+        if (trimmed) themeCount.set(trimmed, (themeCount.get(trimmed) || 0) + 1);
+      }
+    }
+  }
+  const top_issues = usefulResponses
+    .filter((r) => r.feedback_sentiment === "negative")
+    .map((r) => r.translated_text || r.feedback_text || "")
+    .filter(Boolean)
+    .slice(0, 5);
+  const suggestions = usefulResponses
+    .filter((r) => r.feedback_sentiment === "suggestion")
+    .map((r) => r.translated_text || r.feedback_text || "")
+    .filter(Boolean)
+    .slice(0, 5);
+
+  const firstUpload = uploads.sort((a, b) =>
+    (a.session_date || "").localeCompare(b.session_date || "")
+  )[0];
+
+  return res.json({
+    topic: topicName,
+    subject: firstUpload.subject,
+    instructor: firstUpload.instructor || null,
+    session_date: firstUpload.session_date || "",
+    total_responses: responses.length,
+    avg_delivery,
+    avg_content,
+    distribution,
+    nps,
+    feedback: {
+      useful: usefulResponses.length,
+      sentiment,
+      top_issues,
+      suggestions,
+    },
+  });
 });
 
 export default router;
