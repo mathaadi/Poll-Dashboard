@@ -52,6 +52,25 @@ export const GetSubjectsResponseItem = zod.object({
 export const GetSubjectsResponse = zod.array(GetSubjectsResponseItem);
 
 /**
+ * @summary Get sessions list for a subject
+ */
+export const GetSubjectSessionsQueryParams = zod.object({
+  subject: zod.coerce.string(),
+});
+
+export const GetSubjectSessionsResponseItem = zod.object({
+  upload_id: zod.number(),
+  session_date: zod.string(),
+  week_number: zod.string(),
+  total_responses: zod.number(),
+  avg_delivery: zod.number(),
+  avg_content: zod.number(),
+});
+export const GetSubjectSessionsResponse = zod.array(
+  GetSubjectSessionsResponseItem,
+);
+
+/**
  * @summary Get cohort breakdown
  */
 export const GetCohortsResponseItem = zod.object({
@@ -92,6 +111,7 @@ export const GetTrendsResponse = zod.array(GetTrendsResponseItem);
 export const GetDistributionQueryParams = zod.object({
   subject: zod.coerce.string().optional(),
   type: zod.enum(["delivery", "content"]).optional(),
+  upload_id: zod.coerce.number().optional(),
 });
 
 export const GetDistributionResponse = zod.object({
@@ -105,10 +125,34 @@ export const GetDistributionResponse = zod.object({
 });
 
 /**
+ * @summary Get overall distribution across all sessions
+ */
+export const GetDistributionOverallResponse = zod.object({
+  delivery: zod.object({
+    "1": zod.number(),
+    "2": zod.number(),
+    "3": zod.number(),
+    "4": zod.number(),
+    "5": zod.number(),
+  }),
+  content: zod.object({
+    "1": zod.number(),
+    "2": zod.number(),
+    "3": zod.number(),
+    "4": zod.number(),
+    "5": zod.number(),
+  }),
+  total_responses: zod.number(),
+  nps_delivery: zod.number(),
+  nps_content: zod.number(),
+});
+
+/**
  * @summary Get NLP feedback analysis
  */
 export const GetFeedbackQueryParams = zod.object({
   subject: zod.coerce.string().optional(),
+  upload_id: zod.coerce.number().optional(),
 });
 
 export const GetFeedbackResponse = zod.object({
@@ -129,6 +173,31 @@ export const GetFeedbackResponse = zod.object({
   top_negative: zod.array(zod.string()),
   top_suggestions: zod.array(zod.string()),
   top_positive: zod.array(zod.string()),
+});
+
+/**
+ * @summary Get overall feedback sentiment overview
+ */
+export const GetFeedbackOverviewResponse = zod.object({
+  total_useful: zod.number(),
+  sentiment_counts: zod.object({
+    positive: zod.number(),
+    negative: zod.number(),
+    suggestion: zod.number(),
+    neutral: zod.number(),
+  }),
+  sentiment_percent: zod.object({
+    positive: zod.number(),
+    negative: zod.number(),
+    suggestion: zod.number(),
+    neutral: zod.number(),
+  }),
+  top_themes: zod.array(
+    zod.object({
+      theme: zod.string(),
+      count: zod.number(),
+    }),
+  ),
 });
 
 /**

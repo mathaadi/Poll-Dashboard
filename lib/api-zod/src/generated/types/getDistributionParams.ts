@@ -10,4 +10,5 @@ import type { GetDistributionType } from "./getDistributionType";
 export type GetDistributionParams = {
   subject?: string;
   type?: GetDistributionType;
+  upload_id?: number;
 };

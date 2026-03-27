@@ -55,6 +55,27 @@ paths:
                 items:
                   $ref: "#/components/schemas/SubjectAnalytics"
 
+  /subject-sessions:
+    get:
+      operationId: getSubjectSessions
+      tags: [dashboard]
+      summary: Get sessions list for a subject
+      parameters:
+        - name: subject
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Session list for subject
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SubjectSession"
+
   /cohorts:
     get:
       operationId: getCohorts
@@ -108,6 +129,11 @@ paths:
           schema:
             type: string
             enum: [delivery, content]
+        - name: upload_id
+          in: query
+          required: false
+          schema:
+            type: number
       responses:
         "200":
           description: Rating distribution
@@ -115,6 +141,19 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Distribution"
+
+  /distribution/overall:
+    get:
+      operationId: getDistributionOverall
+      tags: [dashboard]
+      summary: Get overall distribution across all sessions
+      responses:
+        "200":
+          description: Overall distribution
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OverallDistribution"
 
   /feedback:
     get:
@@ -127,6 +166,11 @@ paths:
           required: false
           schema:
             type: string
+        - name: upload_id
+          in: query
+          required: false
+          schema:
+            type: number
       responses:
         "200":
           description: Feedback NLP analysis
@@ -134,6 +178,19 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/FeedbackAnalysis"
+
+  /feedback/overview:
+    get:
+      operationId: getFeedbackOverview
+      tags: [dashboard]
+      summary: Get overall feedback sentiment overview
+      responses:
+        "200":
+          description: Overall feedback overview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FeedbackOverview"
 
   /history:
     get:
@@ -244,6 +301,29 @@ components:
         - subjects
         - programs
         - date_range
+
+    SubjectSession:
+      type: object
+      properties:
+        upload_id:
+          type: integer
+        session_date:
+          type: string
+        week_number:
+          type: string
+        total_responses:
+          type: integer
+        avg_delivery:
+          type: number
+        avg_content:
+          type: number
+      required:
+        - upload_id
+        - session_date
+        - week_number
+        - total_responses
+        - avg_delivery
+        - avg_content
 
     TrendPoint:
       type: object
@@ -368,6 +448,46 @@ components:
         - total
         - nps
 
+    DistributionBucket:
+      type: object
+      properties:
+        "1":
+          type: integer
+        "2":
+          type: integer
+        "3":
+          type: integer
+        "4":
+          type: integer
+        "5":
+          type: integer
+      required:
+        - "1"
+        - "2"
+        - "3"
+        - "4"
+        - "5"
+
+    OverallDistribution:
+      type: object
+      properties:
+        delivery:
+          $ref: "#/components/schemas/DistributionBucket"
+        content:
+          $ref: "#/components/schemas/DistributionBucket"
+        total_responses:
+          type: integer
+        nps_delivery:
+          type: number
+        nps_content:
+          type: number
+      required:
+        - delivery
+        - content
+        - total_responses
+        - nps_delivery
+        - nps_content
+
     ThemeCount:
       type: object
       properties:
@@ -390,6 +510,23 @@ components:
           type: integer
         neutral:
           type: integer
+      required:
+        - positive
+        - negative
+        - suggestion
+        - neutral
+
+    SentimentPercent:
+      type: object
+      properties:
+        positive:
+          type: number
+        negative:
+          type: number
+        suggestion:
+          type: number
+        neutral:
+          type: number
       required:
         - positive
         - negative
@@ -429,6 +566,25 @@ components:
         - top_negative
         - top_suggestions
         - top_positive
+
+    FeedbackOverview:
+      type: object
+      properties:
+        total_useful:
+          type: integer
+        sentiment_counts:
+          $ref: "#/components/schemas/SentimentBreakdown"
+        sentiment_percent:
+          $ref: "#/components/schemas/SentimentPercent"
+        top_themes:
+          type: array
+          items:
+            $ref: "#/components/schemas/ThemeCount"
+      required:
+        - total_useful
+        - sentiment_counts
+        - sentiment_percent
+        - top_themes
 
     UploadHistory:
       type: object

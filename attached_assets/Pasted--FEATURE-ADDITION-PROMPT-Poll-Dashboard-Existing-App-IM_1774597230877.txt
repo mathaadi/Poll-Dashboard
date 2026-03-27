@@ -1,0 +1,318 @@
+# ➕ FEATURE ADDITION PROMPT — Poll Dashboard (Existing App)
+
+> ⚠️ IMPORTANT: Do NOT rebuild the app. Do NOT touch working code unless required by these features.
+> These are ADDITIVE changes only. Edit the minimum files needed.
+> The app is already working. Only add what is listed below.
+
+---
+
+## FEATURE 1 — Close Button on Subject Drill-Down Panel
+
+**Where:** The subject drill-down panel that opens when user clicks "View Details" on a subject card.
+
+**What to add:**
+- A visible ✕ close button at the top-right corner of the drill-down panel
+- Clicking it collapses/closes the panel and returns to the subjects grid view
+- Also add: pressing `Escape` key closes the panel
+- The panel should animate: slide-in when opening, slide-out when closing (use Tailwind `transition-all duration-300`)
+
+**Implementation:**
+```jsx
+// In the subject drill-down component, add state:
+const [isOpen, setIsOpen] = useState(false);
+
+// Close button in panel header:
+<button
+  onClick={() => setIsOpen(false)}
+  className="absolute top-4 right-4 text-slate-400 hover:text-white bg-slate-700 hover:bg-slate-600 rounded-full w-8 h-8 flex items-center justify-center transition-colors"
+  title="Close"
+>
+  ✕
+</button>
+
+// Escape key handler:
+useEffect(() => {
+  const handleEsc = (e) => { if (e.key === 'Escape') setIsOpen(false); };
+  window.addEventListener('keydown', handleEsc);
+  return () => window.removeEventListener('keydown', handleEsc);
+}, []);
+```
+
+---
+
+## FEATURE 2 — Multi-Week Selector Inside Subject Drill-Down
+
+**Where:** Inside the subject drill-down panel (Level 6 view).
+
+**What to add:**
+When a subject has more than 1 session uploaded (e.g. ATA has Feb + Mar), show a week/session selector at the top of the drill-down panel so the user can analyze each week independently OR view all combined.
+
+**UI:**
+```
+┌────────────────────────────────────────────────────────────┐
+│ ATA — Practical Session                              [✕]   │
+│                                                            │
+│ View:  [All Sessions ▼]  or  [Feb 07] [Mar 07]            │
+│         ↑ pill buttons / toggle group                      │
+│                                                            │
+│ (Charts and metrics below update based on selection)       │
+└────────────────────────────────────────────────────────────┘
+```
+
+**Implementation details:**
+1. Add a new API endpoint:
+```
+GET /api/subject-sessions?subject=ATA
+Response: [
+  { "upload_id": 1, "session_date": "2026-02-07", "week_number": "1", "total_responses": 168, "avg_delivery": 4.36, "avg_content": 4.37 },
+  { "upload_id": 2, "session_date": "2026-03-07", "week_number": "2", "total_responses": 244, "avg_delivery": 4.48, "avg_content": 4.39 }
+]
+```
+
+2. Update existing `/api/distribution` and `/api/feedback` endpoints to accept an optional `upload_id` parameter:
+```
+GET /api/distribution?subject=ATA&upload_id=1   ← specific week
+GET /api/distribution?subject=ATA               ← all weeks combined (existing behavior)
+
+GET /api/feedback?subject=ATA&upload_id=1       ← specific week
+GET /api/feedback?subject=ATA                   ← all weeks combined
+```
+
+3. In the frontend drill-down component:
+- On open, fetch `GET /api/subject-sessions?subject=ATA`
+- Render pill buttons: **[All]** + one button per session labeled as `Week {week_number} ({month})` e.g. "Week 1 (Feb)" and "Week 2 (Mar)"
+- Selected pill = `bg-blue-600 text-white`, unselected = `bg-slate-700 text-slate-300`
+- Default selection = **All**
+- When a pill is clicked → re-fetch distribution and feedback with `upload_id` → update charts below
+- Show a small comparison table at the bottom when "All" is selected:
+
+| Session | Delivery | Content | Responses |
+|---------|---------|---------|-----------|
+| Week 1 (Feb) | 4.36 | 4.37 | 168 |
+| Week 2 (Mar) | 4.48 | 4.39 | 244 |
+| Change | ↑+0.12 | ↑+0.02 | +76 |
+
+- If a subject has only 1 session → hide the selector entirely (no UI clutter)
+
+---
+
+## FEATURE 3 — Multilingual Feedback Translation Before NLP
+
+**Where:** `src/services/nlp.js` and the upload route `src/routes/upload.js`
+
+**What to do:**
+Before running sentiment classification and theme extraction on feedback text, detect if the text is non-English and translate it to English using the **Anthropic Claude API** (you already have API access in this environment).
+
+### Step 1: Add translation function in `nlp.js`
+
+```javascript
+async function translateToEnglish(text) {
+  // Skip if text is empty or clearly English
+  if (!text || text.trim().length === 0) return text;
+  
+  // Quick heuristic: if text only contains ASCII + common punctuation, assume English
+  const nonAsciiRatio = (text.match(/[^\x00-\x7F]/g) || []).length / text.length;
+  
+  // If mostly ASCII AND no Devanagari/Arabic/Chinese/other script chars → skip translation
+  const hasNonLatinScript = /[\u0900-\u097F\u0600-\u06FF\u4E00-\u9FFF\u0400-\u04FF\uAC00-\uD7AF]/.test(text);
+  
+  if (nonAsciiRatio < 0.15 && !hasNonLatinScript) return text; // Already English
+  
+  try {
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 200,
+        messages: [{
+          role: "user",
+          content: `Translate the following student feedback to English. Return ONLY the translated text, nothing else. If it is already in English, return it unchanged.\n\nFeedback: "${text}"`
+        }]
+      })
+    });
+    const data = await response.json();
+    const translated = data.content?.[0]?.text?.trim();
+    return translated || text; // fallback to original if API fails
+  } catch (err) {
+    console.error('Translation error:', err.message);
+    return text; // fallback to original
+  }
+}
+```
+
+### Step 2: Update the main classify function to be async
+
+```javascript
+// Change classifyFeedback to async:
+async function classifyFeedback(originalText) {
+  if (!isUsefulFeedback(originalText)) {
+    return { is_useful: false, sentiment: null, themes: [], translated_text: null };
+  }
+  
+  // Translate if needed
+  const text = await translateToEnglish(originalText);
+  
+  const sentiment = classifySentiment(text);
+  const themes = extractThemes(text);
+  
+  return {
+    is_useful: true,
+    sentiment,
+    themes: themes.join(','),
+    translated_text: text !== originalText ? text : null // only store if actually translated
+  };
+}
+```
+
+### Step 3: Update the database schema
+
+Add a column to `poll_responses` table to store translated text:
+```sql
+ALTER TABLE poll_responses ADD COLUMN translated_text TEXT;
+```
+
+Run this as a migration — add it to `database.js` in the `initDB()` function using:
+```javascript
+// Safe migration — only adds column if it doesn't exist
+try {
+  db.exec(`ALTER TABLE poll_responses ADD COLUMN translated_text TEXT`);
+} catch(e) {
+  // Column already exists — ignore
+}
+```
+
+### Step 4: Update upload route to await async NLP
+
+Since `classifyFeedback` is now async, update the upload processing loop:
+```javascript
+// In the loop that processes each response row:
+const nlpResult = await classifyFeedback(feedbackText);
+```
+
+Make the surrounding function `async` as needed.
+
+### Important notes:
+- Only call the Claude API if the text fails the ASCII/script detection heuristic — this minimizes API calls (most feedback will be English or short junk)
+- If the Claude API call fails for any reason → gracefully fall back to original text, do NOT crash the upload
+- Batch processing: process all responses serially (not in parallel) to avoid rate limits
+- Store the translated text in `translated_text` column — display it in the Feedback panel in the dashboard alongside the original (show original in gray italic below the translated version)
+
+---
+
+## FEATURE 4 — Add Distribution + NLP Analytics to Dashboard Overview Tab
+
+**Where:** `DashboardPage.jsx` — the **Overview** tab (Level 1 — the first thing users see)
+
+**Current state:** Overview tab only shows 6 KPI cards.
+
+**What to add below the KPI cards:**
+
+### Section A: Overall Rating Distribution (Combined)
+Add a grouped bar chart showing delivery vs content rating distribution across all subjects:
+```
+Rating Distribution — All Sessions
+
+        Delivery  Content
+5 ★  ████████  ████████  (count)
+4 ★  ██████    ████████  (count)
+3 ★  ███       ███       (count)
+2 ★  █         █         (count)
+1 ★  ░         ░         (count)
+```
+
+Use a new API endpoint:
+```
+GET /api/distribution/overall
+Response: {
+  "delivery": { "1": 12, "2": 18, "3": 120, "4": 580, "5": 691 },
+  "content":  { "1": 10, "2": 15, "3": 118, "4": 590, "5": 688 },
+  "total_responses": 1421,
+  "nps_delivery": 61.5,
+  "nps_content": 63.2
+}
+```
+
+Show NPS scores below the chart as badges:
+```
+Delivery NPS: [61.5] (green if > 50, amber if 30-50, red if < 30)
+Content NPS:  [63.2]
+```
+
+### Section B: Subject-wise Average Ratings (Horizontal Bar Chart)
+Already may exist — keep it but ensure it shows BOTH delivery AND content side by side per subject.
+
+### Section C: Overall Sentiment Summary (Mini NLP Panel)
+Show a compact sentiment row below the distribution:
+```
+┌────────────────────────────────────────────────────────────┐
+│ 💬 Feedback Sentiment — All Sessions                       │
+│                                                            │
+│  ✅ Positive  43%  ████████████                           │
+│  🔴 Negative  18%  █████                                  │
+│  💡 Suggestions 24%  ██████                               │
+│  ⚪ Neutral   15%  ████                                   │
+│                                                            │
+│  Top Themes:  [pace ×47] [content ×35] [audio ×21]        │
+│                                   → See full analysis ↗   │
+└────────────────────────────────────────────────────────────┘
+```
+
+"→ See full analysis" button switches to the Feedback tab.
+
+Use a new API endpoint:
+```
+GET /api/feedback/overview
+Response: {
+  "total_useful": 63,
+  "sentiment_counts": { "positive": 27, "negative": 11, "suggestion": 15, "neutral": 10 },
+  "sentiment_percent": { "positive": 43, "negative": 18, "suggestion": 24, "neutral": 15 },
+  "top_themes": [
+    { "theme": "pace", "count": 47 },
+    { "theme": "content", "count": 35 },
+    { "theme": "audio", "count": 21 }
+  ]
+}
+```
+
+### Layout of Overview tab after changes:
+```
+[6 KPI Cards — existing]
+
+[Overall Rating Distribution — new grouped bar chart]
+[NPS Delivery: 61.5]  [NPS Content: 63.2]
+
+[Subject Comparison Bar Chart — existing, keep]
+
+[Feedback Sentiment Summary — new compact row]
+```
+
+---
+
+## FILES TO MODIFY (Minimum Surface Area)
+
+| File | Change |
+|------|--------|
+| `src/services/nlp.js` | Add `translateToEnglish()`, make `classifyFeedback()` async |
+| `src/database.js` | Add migration for `translated_text` column |
+| `src/routes/upload.js` | Await async NLP calls |
+| `src/routes/dashboard.js` | Add 3 new GET endpoints: `/api/subject-sessions`, `/api/distribution/overall`, `/api/feedback/overview`. Update `/api/distribution` and `/api/feedback` to accept optional `upload_id` param |
+| `client/src/pages/DashboardPage.jsx` | Add distribution chart + NLP summary to Overview tab |
+| `client/src/components/DrillDown.jsx` (or equivalent) | Add ✕ close button, Escape key handler, week selector pills |
+
+Do NOT modify: database tables (except the one safe migration), upload logic (except awaiting NLP), existing chart components, CSS/theme.
+
+---
+
+## VERIFICATION AFTER CHANGES
+
+- [ ] Click subject card → drill-down opens with ✕ button visible
+- [ ] Click ✕ → panel closes smoothly
+- [ ] Press Escape → panel closes
+- [ ] ATA drill-down → shows "All | Week 1 (Feb) | Week 2 (Mar)" pills
+- [ ] Click "Week 1 (Feb)" → charts update to show only Feb data
+- [ ] BDA drill-down (only 1 session) → no week selector shown
+- [ ] Upload a CSV with Hindi/mixed feedback → check `translated_text` column in DB
+- [ ] Overview tab → shows distribution chart below KPI cards
+- [ ] Overview tab → shows sentiment summary section
+- [ ] "See full analysis" link in sentiment summary → switches to Feedback tab

@@ -3,7 +3,7 @@ import multer from "multer";
 import { db } from "@workspace/db";
 import { uploadsTable, pollResponsesTable, studentsTable } from "@workspace/db/schema";
 import { parseZoomCsv } from "../services/csvParser.js";
-import { isUsefulFeedback, classifySentiment, classifyThemes } from "../services/nlp.js";
+import { classifyFeedback } from "../services/nlp.js";
 import { computeAverage, computeNPS } from "../services/metrics.js";
 import { eq } from "drizzle-orm";
 
@@ -23,11 +23,10 @@ router.post("/upload", upload.single("file"), async (req, res) => {
     const week_number = (req.body.week_number as string) || "";
     const cohort_override = (req.body.cohort as string) || "";
 
-    // Parse CSV
     const fileContent = req.file.buffer.toString("utf-8");
     const parsed = parseZoomCsv(fileContent);
 
-    // Check for duplicate
+    // Duplicate detection
     const existing = await db
       .select()
       .from(uploadsTable)
@@ -56,12 +55,16 @@ router.post("/upload", upload.single("file"), async (req, res) => {
     const nps_delivery = computeNPS(deliveryRatings);
     const nps_content = computeNPS(contentRatings);
 
-    const useful_feedbacks = parsed.responses
-      .map((r) => r.feedback_text)
-      .filter((t) => isUsefulFeedback(t));
-    const feedback_count = useful_feedbacks.length;
-
     const now = new Date().toISOString();
+
+    // Run NLP on all feedback serially (to avoid rate limits)
+    const nlpResults = [];
+    for (const response of parsed.responses) {
+      const nlp = await classifyFeedback(response.feedback_text || "");
+      nlpResults.push(nlp);
+    }
+
+    const feedback_count = nlpResults.filter((r) => r.is_useful).length;
 
     // Insert upload record
     const [uploadRecord] = await db
@@ -87,11 +90,10 @@ router.post("/upload", upload.single("file"), async (req, res) => {
       })
       .returning();
 
-    // Insert poll responses
-    for (const response of parsed.responses) {
-      const useful = isUsefulFeedback(response.feedback_text);
-      const sentiment = useful ? classifySentiment(response.feedback_text) : null;
-      const themes = useful ? classifyThemes(response.feedback_text) : [];
+    // Insert poll responses with NLP results
+    for (let i = 0; i < parsed.responses.length; i++) {
+      const response = parsed.responses[i];
+      const nlp = nlpResults[i];
 
       await db.insert(pollResponsesTable).values({
         upload_id: uploadRecord.id,
@@ -102,9 +104,10 @@ router.post("/upload", upload.single("file"), async (req, res) => {
         delivery_rating: response.delivery_rating,
         content_rating: response.content_rating,
         feedback_text: response.feedback_text || null,
-        feedback_sentiment: sentiment,
-        feedback_themes: themes.length > 0 ? themes.join(",") : null,
-        is_useful_feedback: useful ? 1 : 0,
+        feedback_sentiment: nlp.sentiment,
+        feedback_themes: nlp.themes || null,
+        is_useful_feedback: nlp.is_useful ? 1 : 0,
+        translated_text: nlp.translated_text,
       });
 
       // Upsert student record

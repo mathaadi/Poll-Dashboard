@@ -20,11 +20,15 @@ import type {
   CohortAnalytics,
   Distribution,
   FeedbackAnalysis,
+  FeedbackOverview,
   GetDistributionParams,
   GetFeedbackParams,
+  GetSubjectSessionsParams,
   GetTrendsParams,
   HealthStatus,
+  OverallDistribution,
   SubjectAnalytics,
+  SubjectSession,
   Summary,
   TrendPoint,
   UploadCsvBody,
@@ -257,6 +261,103 @@ export function useGetSubjects<
   request?: SecondParameter<typeof customFetch>;
 }): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getGetSubjectsQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get sessions list for a subject
+ */
+export const getGetSubjectSessionsUrl = (params: GetSubjectSessionsParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/subject-sessions?${stringifiedParams}`
+    : `/api/subject-sessions`;
+};
+
+export const getSubjectSessions = async (
+  params: GetSubjectSessionsParams,
+  options?: RequestInit,
+): Promise<SubjectSession[]> => {
+  return customFetch<SubjectSession[]>(getGetSubjectSessionsUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetSubjectSessionsQueryKey = (
+  params?: GetSubjectSessionsParams,
+) => {
+  return [`/api/subject-sessions`, ...(params ? [params] : [])] as const;
+};
+
+export const getGetSubjectSessionsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getSubjectSessions>>,
+  TError = ErrorType<unknown>,
+>(
+  params: GetSubjectSessionsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSubjectSessions>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetSubjectSessionsQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getSubjectSessions>>
+  > = ({ signal }) => getSubjectSessions(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getSubjectSessions>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetSubjectSessionsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getSubjectSessions>>
+>;
+export type GetSubjectSessionsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get sessions list for a subject
+ */
+
+export function useGetSubjectSessions<
+  TData = Awaited<ReturnType<typeof getSubjectSessions>>,
+  TError = ErrorType<unknown>,
+>(
+  params: GetSubjectSessionsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSubjectSessions>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetSubjectSessionsQueryOptions(params, options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;
@@ -529,6 +630,82 @@ export function useGetDistribution<
 }
 
 /**
+ * @summary Get overall distribution across all sessions
+ */
+export const getGetDistributionOverallUrl = () => {
+  return `/api/distribution/overall`;
+};
+
+export const getDistributionOverall = async (
+  options?: RequestInit,
+): Promise<OverallDistribution> => {
+  return customFetch<OverallDistribution>(getGetDistributionOverallUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetDistributionOverallQueryKey = () => {
+  return [`/api/distribution/overall`] as const;
+};
+
+export const getGetDistributionOverallQueryOptions = <
+  TData = Awaited<ReturnType<typeof getDistributionOverall>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getDistributionOverall>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetDistributionOverallQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getDistributionOverall>>
+  > = ({ signal }) => getDistributionOverall({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getDistributionOverall>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetDistributionOverallQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getDistributionOverall>>
+>;
+export type GetDistributionOverallQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get overall distribution across all sessions
+ */
+
+export function useGetDistributionOverall<
+  TData = Awaited<ReturnType<typeof getDistributionOverall>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getDistributionOverall>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetDistributionOverallQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
  * @summary Get NLP feedback analysis
  */
 export const getGetFeedbackUrl = (params?: GetFeedbackParams) => {
@@ -614,6 +791,81 @@ export function useGetFeedback<
   },
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getGetFeedbackQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get overall feedback sentiment overview
+ */
+export const getGetFeedbackOverviewUrl = () => {
+  return `/api/feedback/overview`;
+};
+
+export const getFeedbackOverview = async (
+  options?: RequestInit,
+): Promise<FeedbackOverview> => {
+  return customFetch<FeedbackOverview>(getGetFeedbackOverviewUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetFeedbackOverviewQueryKey = () => {
+  return [`/api/feedback/overview`] as const;
+};
+
+export const getGetFeedbackOverviewQueryOptions = <
+  TData = Awaited<ReturnType<typeof getFeedbackOverview>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getFeedbackOverview>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetFeedbackOverviewQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getFeedbackOverview>>
+  > = ({ signal }) => getFeedbackOverview({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getFeedbackOverview>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetFeedbackOverviewQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getFeedbackOverview>>
+>;
+export type GetFeedbackOverviewQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get overall feedback sentiment overview
+ */
+
+export function useGetFeedbackOverview<
+  TData = Awaited<ReturnType<typeof getFeedbackOverview>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getFeedbackOverview>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetFeedbackOverviewQueryOptions(options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

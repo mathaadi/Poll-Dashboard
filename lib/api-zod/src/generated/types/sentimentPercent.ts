@@ -6,7 +6,9 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export type GetFeedbackParams = {
-  subject?: string;
-  upload_id?: number;
-};
+export interface SentimentPercent {
+  positive: number;
+  negative: number;
+  suggestion: number;
+  neutral: number;
+}

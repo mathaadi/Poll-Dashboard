@@ -1,4 +1,4 @@
-import { pgTable, serial, text, integer, real, timestamp, unique } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, integer, real, unique } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -38,6 +38,7 @@ export const pollResponsesTable = pgTable("poll_responses", {
   feedback_sentiment: text("feedback_sentiment"),
   feedback_themes: text("feedback_themes"),
   is_useful_feedback: integer("is_useful_feedback").default(0),
+  translated_text: text("translated_text"),
 });
 
 export const studentsTable = pgTable("students", {

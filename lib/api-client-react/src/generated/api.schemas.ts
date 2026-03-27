@@ -25,6 +25,15 @@ export interface Summary {
   date_range: SummaryDateRange;
 }
 
+export interface SubjectSession {
+  upload_id: number;
+  session_date: string;
+  week_number: string;
+  total_responses: number;
+  avg_delivery: number;
+  avg_content: number;
+}
+
 export interface TrendPoint {
   session_date: string;
   week: string;
@@ -75,12 +84,35 @@ export interface Distribution {
   nps: number;
 }
 
+export interface DistributionBucket {
+  "1": number;
+  "2": number;
+  "3": number;
+  "4": number;
+  "5": number;
+}
+
+export interface OverallDistribution {
+  delivery: DistributionBucket;
+  content: DistributionBucket;
+  total_responses: number;
+  nps_delivery: number;
+  nps_content: number;
+}
+
 export interface ThemeCount {
   theme: string;
   count: number;
 }
 
 export interface SentimentBreakdown {
+  positive: number;
+  negative: number;
+  suggestion: number;
+  neutral: number;
+}
+
+export interface SentimentPercent {
   positive: number;
   negative: number;
   suggestion: number;
@@ -95,6 +127,13 @@ export interface FeedbackAnalysis {
   top_negative: string[];
   top_suggestions: string[];
   top_positive: string[];
+}
+
+export interface FeedbackOverview {
+  total_useful: number;
+  sentiment_counts: SentimentBreakdown;
+  sentiment_percent: SentimentPercent;
+  top_themes: ThemeCount[];
 }
 
 export interface UploadHistory {
@@ -127,6 +166,10 @@ export interface UploadError {
   original_upload_date?: string;
 }
 
+export type GetSubjectSessionsParams = {
+  subject: string;
+};
+
 export type GetTrendsParams = {
   subject?: string;
 };
@@ -134,6 +177,7 @@ export type GetTrendsParams = {
 export type GetDistributionParams = {
   subject?: string;
   type?: GetDistributionType;
+  upload_id?: number;
 };
 
 export type GetDistributionType =
@@ -146,6 +190,7 @@ export const GetDistributionType = {
 
 export type GetFeedbackParams = {
   subject?: string;
+  upload_id?: number;
 };
 
 export type UploadCsvBody = {

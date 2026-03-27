@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
 import { uploadsTable, pollResponsesTable } from "@workspace/db/schema";
-import { eq, and, isNotNull, sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { computeDistribution, computeNPS } from "../services/metrics.js";
 
 const router: IRouter = Router();
@@ -64,7 +64,6 @@ router.get("/summary", async (_req, res) => {
 router.get("/subjects", async (_req, res) => {
   const uploads = await db.select().from(uploadsTable);
 
-  // Group by subject
   const subjectMap = new Map<string, typeof uploads>();
   for (const u of uploads) {
     if (!subjectMap.has(u.subject)) subjectMap.set(u.subject, []);
@@ -100,7 +99,6 @@ router.get("/subjects", async (_req, res) => {
 
       const nps = computeNPS(deliveryRatings);
 
-      // Sort sessions by date for trend
       const sortedSessions = sessions.sort((a, b) =>
         (a.session_date || "").localeCompare(b.session_date || "")
       );
@@ -125,6 +123,30 @@ router.get("/subjects", async (_req, res) => {
   return res.json(result);
 });
 
+// GET /api/subject-sessions?subject=X
+router.get("/subject-sessions", async (req, res) => {
+  const subject = req.query.subject as string;
+  if (!subject) return res.status(400).json({ error: "subject is required" });
+
+  const uploads = await db
+    .select()
+    .from(uploadsTable)
+    .where(eq(uploadsTable.subject, subject));
+
+  const result = uploads
+    .sort((a, b) => (a.session_date || "").localeCompare(b.session_date || ""))
+    .map((u) => ({
+      upload_id: u.id,
+      session_date: u.session_date || "",
+      week_number: u.week_number || "",
+      total_responses: u.total_responses || 0,
+      avg_delivery: Math.round((u.avg_delivery_rating || 0) * 100) / 100,
+      avg_content: Math.round((u.avg_content_rating || 0) * 100) / 100,
+    }));
+
+  return res.json(result);
+});
+
 // GET /api/cohorts
 router.get("/cohorts", async (_req, res) => {
   const responses = await db.select().from(pollResponsesTable);
@@ -132,7 +154,6 @@ router.get("/cohorts", async (_req, res) => {
 
   const uploadMap = new Map(uploads.map((u) => [u.id, u]));
 
-  // Group by cohort
   const cohortMap = new Map<string, typeof responses>();
   for (const r of responses) {
     const cohort = r.cohort || "External/Unknown";
@@ -157,7 +178,6 @@ router.get("/cohorts", async (_req, res) => {
         ? validContent.reduce((a, b) => a + b, 0) / validContent.length
         : 0;
 
-    // Group by subject within cohort
     const subjectMap = new Map<string, { delivery: number[]; content: number[] }>();
     for (const r of cohortResponses) {
       const upload = uploadMap.get(r.upload_id || -1);
@@ -217,38 +237,61 @@ router.get("/trends", async (req, res) => {
   return res.json(result);
 });
 
-// GET /api/distribution?subject=X&type=delivery|content
-router.get("/distribution", async (req, res) => {
-  const subject = req.query.subject as string | undefined;
-  const type = (req.query.type as string) || "delivery";
+// Helper: get responses filtered by upload_id or subject
+async function getFilteredResponses(
+  subject?: string,
+  upload_id?: number
+): Promise<Awaited<ReturnType<typeof db.select>>["0"][]> {
+  if (upload_id) {
+    return db.select().from(pollResponsesTable).where(eq(pollResponsesTable.upload_id, upload_id));
+  }
 
   let uploads = await db.select().from(uploadsTable);
   if (subject) {
     uploads = uploads.filter((u) => u.subject === subject);
   }
 
-  if (uploads.length === 0) {
-    return res.json({ "1": 0, "2": 0, "3": 0, "4": 0, "5": 0, total: 0, nps: 0 });
-  }
+  if (uploads.length === 0) return [];
 
   const uploadIds = uploads.map((u) => u.id);
-
-  let responses;
   if (uploadIds.length === 1) {
-    responses = await db
-      .select()
-      .from(pollResponsesTable)
-      .where(eq(pollResponsesTable.upload_id, uploadIds[0]));
-  } else {
-    responses = await db
-      .select()
-      .from(pollResponsesTable)
-      .where(
-        sql`${pollResponsesTable.upload_id} IN (${sql.join(
-          uploadIds.map((id) => sql`${id}`),
-          sql`, `
-        )})`
-      );
+    return db.select().from(pollResponsesTable).where(eq(pollResponsesTable.upload_id, uploadIds[0]));
+  }
+  return db.select().from(pollResponsesTable).where(
+    sql`${pollResponsesTable.upload_id} IN (${sql.join(uploadIds.map((id) => sql`${id}`), sql`, `)})`
+  );
+}
+
+// GET /api/distribution?subject=X&type=delivery|content&upload_id=N
+router.get("/distribution/overall", async (_req, res) => {
+  const responses = await db.select().from(pollResponsesTable);
+
+  const deliveryRatings = responses.map((r) => r.delivery_rating);
+  const contentRatings = responses.map((r) => r.content_rating);
+
+  const deliveryDist = computeDistribution(deliveryRatings);
+  const contentDist = computeDistribution(contentRatings);
+
+  const total_responses = responses.filter((r) => r.delivery_rating !== null || r.content_rating !== null).length;
+
+  return res.json({
+    delivery: deliveryDist,
+    content: contentDist,
+    total_responses,
+    nps_delivery: computeNPS(deliveryRatings),
+    nps_content: computeNPS(contentRatings),
+  });
+});
+
+router.get("/distribution", async (req, res) => {
+  const subject = req.query.subject as string | undefined;
+  const type = (req.query.type as string) || "delivery";
+  const upload_id = req.query.upload_id ? Number(req.query.upload_id) : undefined;
+
+  const responses = await getFilteredResponses(subject, upload_id);
+
+  if (responses.length === 0) {
+    return res.json({ "1": 0, "2": 0, "3": 0, "4": 0, "5": 0, total: 0, nps: 0 });
   }
 
   const ratings = responses.map((r) =>
@@ -262,16 +305,52 @@ router.get("/distribution", async (req, res) => {
   return res.json({ ...dist, total, nps });
 });
 
-// GET /api/feedback?subject=X
-router.get("/feedback", async (req, res) => {
-  const subject = req.query.subject as string | undefined;
+// GET /api/feedback/overview
+router.get("/feedback/overview", async (_req, res) => {
+  const usefulResponses = await db
+    .select()
+    .from(pollResponsesTable)
+    .where(eq(pollResponsesTable.is_useful_feedback, 1));
 
-  let uploads = await db.select().from(uploadsTable);
-  if (subject) {
-    uploads = uploads.filter((u) => u.subject === subject);
+  const total_useful = usefulResponses.length;
+  const sentiment_counts = { positive: 0, negative: 0, suggestion: 0, neutral: 0 };
+  const themeCount = new Map<string, number>();
+
+  for (const r of usefulResponses) {
+    const s = r.feedback_sentiment as keyof typeof sentiment_counts;
+    if (s && s in sentiment_counts) sentiment_counts[s]++;
+    if (r.feedback_themes) {
+      for (const t of r.feedback_themes.split(",")) {
+        const trimmed = t.trim();
+        if (trimmed) themeCount.set(trimmed, (themeCount.get(trimmed) || 0) + 1);
+      }
+    }
   }
 
-  if (uploads.length === 0) {
+  const total = total_useful || 1;
+  const sentiment_percent = {
+    positive: Math.round((sentiment_counts.positive / total) * 100),
+    negative: Math.round((sentiment_counts.negative / total) * 100),
+    suggestion: Math.round((sentiment_counts.suggestion / total) * 100),
+    neutral: Math.round((sentiment_counts.neutral / total) * 100),
+  };
+
+  const top_themes = [...themeCount.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 6)
+    .map(([theme, count]) => ({ theme, count }));
+
+  return res.json({ total_useful, sentiment_counts, sentiment_percent, top_themes });
+});
+
+// GET /api/feedback?subject=X&upload_id=N
+router.get("/feedback", async (req, res) => {
+  const subject = req.query.subject as string | undefined;
+  const upload_id = req.query.upload_id ? Number(req.query.upload_id) : undefined;
+
+  const responses = await getFilteredResponses(subject, upload_id);
+
+  if (responses.length === 0) {
     return res.json({
       total_feedback: 0,
       useful_feedback: 0,
@@ -283,36 +362,15 @@ router.get("/feedback", async (req, res) => {
     });
   }
 
-  const uploadIds = uploads.map((u) => u.id);
-  let responses;
-  if (uploadIds.length === 1) {
-    responses = await db
-      .select()
-      .from(pollResponsesTable)
-      .where(eq(pollResponsesTable.upload_id, uploadIds[0]));
-  } else {
-    responses = await db
-      .select()
-      .from(pollResponsesTable)
-      .where(
-        sql`${pollResponsesTable.upload_id} IN (${sql.join(
-          uploadIds.map((id) => sql`${id}`),
-          sql`, `
-        )})`
-      );
-  }
-
   const withFeedback = responses.filter((r) => r.feedback_text);
   const usefulResponses = responses.filter((r) => r.is_useful_feedback === 1);
 
-  // Count sentiments
   const sentiment = { positive: 0, negative: 0, suggestion: 0, neutral: 0 };
   for (const r of usefulResponses) {
     const s = r.feedback_sentiment as keyof typeof sentiment;
     if (s && s in sentiment) sentiment[s]++;
   }
 
-  // Count themes
   const themeCount = new Map<string, number>();
   for (const r of usefulResponses) {
     if (r.feedback_themes) {
@@ -326,20 +384,23 @@ router.get("/feedback", async (req, res) => {
     .sort((a, b) => b[1] - a[1])
     .map(([theme, count]) => ({ theme, count }));
 
-  // Top feedback by sentiment
+  // Show translated text where available, otherwise original
+  const displayText = (r: typeof usefulResponses[0]) =>
+    r.translated_text || r.feedback_text || "";
+
   const top_negative = usefulResponses
     .filter((r) => r.feedback_sentiment === "negative")
-    .map((r) => r.feedback_text!)
+    .map(displayText)
     .slice(0, 5);
 
   const top_suggestions = usefulResponses
     .filter((r) => r.feedback_sentiment === "suggestion")
-    .map((r) => r.feedback_text!)
+    .map(displayText)
     .slice(0, 5);
 
   const top_positive = usefulResponses
     .filter((r) => r.feedback_sentiment === "positive")
-    .map((r) => r.feedback_text!)
+    .map(displayText)
     .slice(0, 5);
 
   return res.json({

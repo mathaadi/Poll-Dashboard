@@ -1,3 +1,5 @@
+import { anthropic } from "@workspace/integrations-anthropic-ai";
+
 export type Sentiment = "positive" | "negative" | "suggestion" | "neutral";
 
 const JUNK_EXACT = new Set([
@@ -10,27 +12,50 @@ const JUNK_EXACT = new Set([
   "amazing", "wonderful", "nice class", "no doubt", "all good .",
 ]);
 
-const JUNK_PREFIXES = [
-  "good", "great", "nice", "all good", "thank", "amazing", "wonderful",
-];
-
 export function isUsefulFeedback(text: string): boolean {
   if (!text || text.trim().length === 0) return false;
   const cleaned = text.trim().toLowerCase().replace(/[.!?]+$/, "").trim();
 
-  // Too short (3 words or less)
   if (cleaned.split(/\s+/).length <= 3) return false;
-
-  // Junk exact match
   if (JUNK_EXACT.has(cleaned)) return false;
-
-  // Repeated characters (e.g. "......", "!!!")
   if (/^(.)\1{4,}$/.test(cleaned)) return false;
-
-  // Single letter
   if (cleaned.length <= 2) return false;
 
   return true;
+}
+
+/**
+ * Detect if text needs translation (non-English script detected).
+ */
+function needsTranslation(text: string): boolean {
+  const nonAsciiRatio = (text.match(/[^\x00-\x7F]/g) || []).length / text.length;
+  const hasNonLatinScript = /[\u0900-\u097F\u0600-\u06FF\u4E00-\u9FFF\u0400-\u04FF\uAC00-\uD7AF]/.test(text);
+  return nonAsciiRatio >= 0.15 || hasNonLatinScript;
+}
+
+/**
+ * Translate non-English feedback to English using Claude Haiku (fast + cheap).
+ * Falls back to original text on any error.
+ */
+export async function translateToEnglish(text: string): Promise<string> {
+  if (!text || text.trim().length === 0) return text;
+  if (!needsTranslation(text)) return text;
+
+  try {
+    const message = await anthropic.messages.create({
+      model: "claude-haiku-4-5",
+      max_tokens: 8192,
+      messages: [{
+        role: "user",
+        content: `Translate the following student feedback to English. Return ONLY the translated text, nothing else. If it is already in English, return it unchanged.\n\nFeedback: "${text}"`,
+      }],
+    });
+    const block = message.content[0];
+    if (block.type === "text") return block.text.trim() || text;
+    return text;
+  } catch {
+    return text;
+  }
 }
 
 const NEGATIVE_WORDS = [
@@ -96,22 +121,32 @@ export function classifyThemes(text: string): string[] {
     .map((tp) => tp.theme);
 }
 
-export function analyzeResponses(feedbackTexts: string[]): {
-  useful_feedback: string[];
-  sentiments: Sentiment[];
-  themes: string[][];
-} {
-  const useful_feedback: string[] = [];
-  const sentiments: Sentiment[] = [];
-  const themes: string[][] = [];
+export interface NLPResult {
+  is_useful: boolean;
+  sentiment: Sentiment | null;
+  themes: string;
+  translated_text: string | null;
+}
 
-  for (const text of feedbackTexts) {
-    if (isUsefulFeedback(text)) {
-      useful_feedback.push(text);
-      sentiments.push(classifySentiment(text));
-      themes.push(classifyThemes(text));
-    }
+/**
+ * Full NLP pipeline: translate if needed, classify sentiment and themes.
+ * Async because translation may call Claude API.
+ */
+export async function classifyFeedback(originalText: string): Promise<NLPResult> {
+  if (!isUsefulFeedback(originalText)) {
+    return { is_useful: false, sentiment: null, themes: "", translated_text: null };
   }
 
-  return { useful_feedback, sentiments, themes };
+  const translatedText = await translateToEnglish(originalText);
+  const wasTranslated = translatedText !== originalText;
+
+  const sentiment = classifySentiment(translatedText);
+  const themes = classifyThemes(translatedText);
+
+  return {
+    is_useful: true,
+    sentiment,
+    themes: themes.join(","),
+    translated_text: wasTranslated ? translatedText : null,
+  };
 }

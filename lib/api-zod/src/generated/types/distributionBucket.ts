@@ -6,7 +6,10 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export type GetFeedbackParams = {
-  subject?: string;
-  upload_id?: number;
-};
+export interface DistributionBucket {
+  "1": number;
+  "2": number;
+  "3": number;
+  "4": number;
+  "5": number;
+}
