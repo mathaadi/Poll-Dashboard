@@ -1,0 +1,918 @@
+# 🚀 ULTIMATE BUILD PROMPT — Poll Analytics Dashboard (Full Stack + Deploy)
+
+> **INSTRUCTIONS FOR AI TOOL:**
+> Read this entire prompt before writing a single line of code.
+> Build everything listed here. Do not skip any section.
+> When done, the app must be live and accessible via a public URL.
+> The tool to use is **Replit** (replit.com) — it handles frontend, backend, database, AND one-click publishing together.
+
+---
+
+## 🎯 WHAT YOU ARE BUILDING
+
+A **Live Poll Analytics Dashboard** for an educational institution (IITJ) that:
+- Accepts Zoom poll CSV uploads with session metadata
+- Parses the non-standard Zoom CSV format (detailed below)
+- Stores all data persistently in a database (never deletes old data)
+- Shows an interactive 6-level drill-down dashboard
+- Analyzes free-text feedback with NLP (no external libraries needed)
+- Detects and rejects duplicate uploads
+- Is published to a live public URL
+
+---
+
+## 📂 EXACT CSV FORMAT (CRITICAL — READ CAREFULLY)
+
+The CSV files come from Zoom's poll export. They are NOT standard CSVs. Here is the exact structure:
+
+```
+Row 1:  Overview,,,,,,,,,,
+Row 2:  Generate Time,Meeting Topic,Meeting/Webinar ID,Actual Start Time,...
+Row 3:  03-09-2026 19:01,ATA || Practical Session,89480443928,02-07-2026 17:05,...
+Row 4:  (empty or distribution data — skip)
+Row 5:  Launched Polls,,,,...
+Row 6:  #,Poll Name,Questions,Responses,...
+Row 7:  1,Untitled poll 1,3,161,...
+Row 8:  (empty — skip)
+Row 9:  Untitled poll 1,,,,...
+Row 10: #,User Name,Email Address,Submitted Date and Time,[Q1 text],[Q2 text],[Q3 text],...  ← HEADER ROW
+Row 11: 1,Mahi Jain,b25bs2142@iitj.ac.in,02-07-2026 18:35,4,4,fine,...  ← DATA STARTS HERE
+Row 12: 2,Om Jee,omjeemishra202222@gmail.com,02-07-2026 18:35,4,4,...
+...
+```
+
+### How to Parse:
+1. Read Row 3, Column B → extract `Meeting Topic` (e.g. `ATA || Practical Session`) → subject = `ATA`, session_type = `Practical Session`
+2. Read Row 3, Column C → `Meeting/Webinar ID` → use for duplicate detection
+3. Read Row 3, Column D → `Actual Start Time` → session date (format: `MM-DD-YYYY HH:mm`)
+4. Skip rows 1–9
+5. Row 10 = column headers (contains `User Name`, `Email Address`, `Submitted Date and Time`, and the two rating questions)
+6. Rows 11+ = actual student response data. Columns are:
+   - Col A (index 0): Row number — ignore
+   - Col B (index 1): Student name
+   - Col C (index 2): Student email
+   - Col D (index 3): Submission timestamp
+   - Col E (index 4): **Delivery Rating** (1–5) — "How would you rate the overall delivery..."
+   - Col F (index 5): **Content Rating** (1–5) — "How would you rate the quality and relevance..."
+   - Col G (index 6): **Feedback Text** (free text, often empty)
+7. Stop reading when you hit a row where Col B starts with empty or whitespace only
+
+### Important Notes:
+- Always open files with `utf-8-sig` encoding (handles BOM character)
+- Ratings can be blank — store as NULL
+- Emails can have typos (e.g. `iit.ac.in` instead of `iitj.ac.in`, `gmai.com` instead of `gmail.com`) — store as-is, don't reject
+- Some student names include roll numbers in parentheses e.g. `Aashman Sharma (B25BS2003)` — store full string
+- The right side of rows 4–9 contain Zoom-generated distribution summary data (columns I–K approximately) — **ignore these, compute your own**
+
+### Cohort Detection from Email:
+- Email starts with `b25bs` → Cohort = `2025-BS`
+- Email starts with `b24bs` → Cohort = `2024-BS`
+- Email starts with `b23bs` → Cohort = `2023-BS`
+- Anything else → Cohort = `External/Unknown`
+
+---
+
+## 🗃️ DATABASE SCHEMA (SQLite)
+
+Use **SQLite** with the `better-sqlite3` npm package. Database file at `./db/polls.db`.
+
+### Table 1: `uploads`
+```sql
+CREATE TABLE IF NOT EXISTS uploads (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  meeting_id TEXT NOT NULL,
+  meeting_topic TEXT,
+  subject TEXT NOT NULL,
+  session_type TEXT NOT NULL,
+  program_name TEXT NOT NULL,
+  cohort TEXT,
+  semester TEXT,
+  week_number TEXT,
+  session_date TEXT,
+  upload_timestamp TEXT DEFAULT (datetime('now')),
+  total_responses INTEGER DEFAULT 0,
+  avg_delivery_rating REAL,
+  avg_content_rating REAL,
+  avg_combined_rating REAL,
+  feedback_count INTEGER DEFAULT 0,
+  nps_delivery REAL,
+  nps_content REAL,
+  UNIQUE(meeting_id)
+);
+```
+
+### Table 2: `poll_responses`
+```sql
+CREATE TABLE IF NOT EXISTS poll_responses (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  upload_id INTEGER REFERENCES uploads(id),
+  student_name TEXT,
+  student_email TEXT,
+  cohort TEXT,
+  submission_time TEXT,
+  delivery_rating INTEGER,
+  content_rating INTEGER,
+  feedback_text TEXT,
+  feedback_sentiment TEXT,
+  feedback_themes TEXT,
+  is_useful_feedback INTEGER DEFAULT 0
+);
+```
+
+### Table 3: `students`
+```sql
+CREATE TABLE IF NOT EXISTS students (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  email TEXT UNIQUE,
+  name TEXT,
+  cohort TEXT,
+  first_seen TEXT,
+  last_seen TEXT,
+  total_sessions INTEGER DEFAULT 0
+);
+```
+
+---
+
+## 🏗️ TECH STACK
+
+| Layer | Technology | Why |
+|-------|-----------|-----|
+| Frontend | React (with Vite or CRA) | Fast, component-based |
+| Styling | Tailwind CSS | No-config dark theme |
+| Charts | Recharts | Works perfectly with React |
+| Backend | Node.js + Express | Beginner-friendly, JavaScript everywhere |
+| Database | SQLite via better-sqlite3 | Zero setup, file-based |
+| File Upload | Multer | Industry standard for Node.js |
+| CSV Parsing | Custom parser (no library) | Zoom format is non-standard |
+| Hosting | Replit | One-click deploy, free, full-stack |
+
+---
+
+## 📁 COMPLETE FILE STRUCTURE
+
+```
+poll-dashboard/
+├── backend/
+│   ├── src/
+│   │   ├── index.js            ← Express server entry
+│   │   ├── database.js         ← SQLite init + table creation
+│   │   ├── routes/
+│   │   │   ├── upload.js       ← POST /api/upload
+│   │   │   └── dashboard.js    ← All GET /api/* dashboard routes
+│   │   ├── services/
+│   │   │   ├── csvParser.js    ← Zoom CSV custom parser
+│   │   │   ├── metrics.js      ← Compute averages, NPS, distributions
+│   │   │   └── nlp.js          ← Sentiment + theme classification (pure JS)
+│   │   └── utils/
+│   │       └── helpers.js      ← Date formatting, email → cohort mapping
+│   ├── uploads/                ← Temp folder (CSVs deleted after processing)
+│   ├── db/                     ← polls.db lives here
+│   ├── package.json
+│   └── .env
+├── frontend/
+│   ├── src/
+│   │   ├── App.jsx
+│   │   ├── main.jsx
+│   │   ├── index.css
+│   │   ├── pages/
+│   │   │   ├── UploadPage.jsx
+│   │   │   └── DashboardPage.jsx
+│   │   ├── components/
+│   │   │   ├── Header.jsx
+│   │   │   ├── KPICard.jsx
+│   │   │   ├── SubjectCard.jsx
+│   │   │   ├── DrillDown.jsx
+│   │   │   ├── FeedbackPanel.jsx
+│   │   │   └── charts/
+│   │   │       ├── RatingBarChart.jsx
+│   │   │       ├── TrendLineChart.jsx
+│   │   │       ├── CohortHeatmap.jsx
+│   │   │       └── SentimentPieChart.jsx
+│   │   └── services/
+│   │       └── api.js          ← Axios calls to backend
+│   ├── index.html
+│   └── package.json
+└── README.md
+```
+
+---
+
+## 🔌 ALL API ENDPOINTS
+
+### Upload
+```
+POST /api/upload
+Content-Type: multipart/form-data
+Body fields:
+  - file: CSV file
+  - program_name: string (from allowed list)
+  - session_type: "Practical" | "Theory"
+  - cohort: string (optional, auto-detected from emails if blank)
+  - semester: string
+  - week_number: string
+
+Response (success):
+{
+  "success": true,
+  "upload_id": 12,
+  "subject": "ATA",
+  "total_responses": 168,
+  "avg_delivery_rating": 4.36,
+  "avg_content_rating": 4.37
+}
+
+Response (duplicate):
+{
+  "success": false,
+  "error": "DUPLICATE",
+  "message": "This poll was already uploaded on 2026-03-01",
+  "original_upload_date": "2026-03-01T10:23:00Z"
+}
+```
+
+### Dashboard — Summary (Level 1)
+```
+GET /api/summary
+Response:
+{
+  "total_sessions": 7,
+  "total_responses": 1421,
+  "avg_delivery": 4.38,
+  "avg_content": 4.40,
+  "avg_combined": 4.39,
+  "subjects": ["ATA", "BDA", "FSP", "LANA"],
+  "programs": ["BS Data Science"],
+  "date_range": { "from": "2026-02-06", "to": "2026-03-08" }
+}
+```
+
+### Dashboard — Per Subject (Level 5)
+```
+GET /api/subjects
+Response: [
+  {
+    "subject": "ATA",
+    "total_sessions": 2,
+    "total_responses": 412,
+    "avg_delivery": 4.42,
+    "avg_content": 4.38,
+    "nps": 62.5,
+    "trend": [
+      { "week": "Feb Week 1", "delivery": 4.36, "content": 4.37 },
+      { "week": "Mar Week 1", "delivery": 4.48, "content": 4.39 }
+    ]
+  },
+  ...
+]
+```
+
+### Dashboard — Cohort Breakdown (Level 6)
+```
+GET /api/cohorts
+Response: [
+  {
+    "cohort": "2025-BS",
+    "total_responses": 1151,
+    "avg_delivery": 4.40,
+    "avg_content": 4.42,
+    "by_subject": {
+      "ATA": { "avg_delivery": 4.45, "avg_content": 4.40 },
+      ...
+    }
+  },
+  ...
+]
+```
+
+### Dashboard — Week Trends
+```
+GET /api/trends?subject=ATA
+Response: [
+  { "session_date": "2026-02-07", "week": "1", "avg_delivery": 4.36, "avg_content": 4.37, "responses": 161 },
+  { "session_date": "2026-03-07", "week": "2", "avg_delivery": 4.48, "avg_content": 4.39, "responses": 244 }
+]
+```
+
+### Dashboard — Rating Distribution
+```
+GET /api/distribution?subject=ATA&type=delivery
+Response: {
+  "1": 2, "2": 3, "3": 17, "4": 52, "5": 87,
+  "total": 161,
+  "nps": 52.8
+}
+```
+
+### Dashboard — Feedback NLP
+```
+GET /api/feedback?subject=ATA
+Response: {
+  "total_feedback": 45,
+  "useful_feedback": 18,
+  "sentiment": {
+    "positive": 9,
+    "negative": 5,
+    "suggestion": 3,
+    "neutral": 1
+  },
+  "themes": [
+    { "theme": "pace", "count": 7 },
+    { "theme": "content", "count": 5 },
+    { "theme": "audio", "count": 3 }
+  ],
+  "top_negative": ["voice was breaking during the session", "camera was off so zero interaction"],
+  "top_suggestions": ["Pace of session was very fast. Try to bring down the pace"]
+}
+```
+
+### Upload History
+```
+GET /api/history
+Response: [
+  {
+    "id": 1,
+    "subject": "ATA",
+    "session_date": "2026-02-07",
+    "program_name": "BS Data Science",
+    "week_number": "1",
+    "total_responses": 161,
+    "avg_combined_rating": 4.37,
+    "upload_timestamp": "2026-03-27T10:00:00Z"
+  },
+  ...
+]
+```
+
+---
+
+## 🧠 NLP CLASSIFICATION (Pure JavaScript — No Libraries)
+
+Add this logic in `backend/src/services/nlp.js`. This runs at upload time and stores results in DB.
+
+### Step 1: Filter Useful Feedback
+```javascript
+function isUsefulFeedback(text) {
+  if (!text || text.trim().length === 0) return false;
+  const cleaned = text.trim().toLowerCase();
+  
+  // Too short (3 words or less)
+  if (cleaned.split(/\s+/).length <= 3) return false;
+  
+  // Junk words
+  const junkExact = ['good', 'fine', 'ok', 'okay', 'nice', 'great', 'n/a', 'na', 'no', 
+    'yes', 'nothing', 'none', 'nope', 'no comments', 'no comment', 'no issues',
+    'good session', 'nice session', 'great session', 'very good', 'very nice',
+    'all good', 'all fine', 'everything is fine', 'everything was good',
+    'no feedback', 'nothing to say', '...', '..', '.', '-', 'nil'];
+  if (junkExact.includes(cleaned)) return false;
+  
+  // Repeated characters (e.g. "......", "!!!")
+  if (/^(.)\1{4,}$/.test(cleaned)) return false;
+  
+  return true;
+}
+```
+
+### Step 2: Classify Sentiment
+```javascript
+function classifySentiment(text) {
+  const t = text.toLowerCase();
+  
+  const negativeWords = ['bad', 'poor', 'worst', 'terrible', 'horrible', 'boring', 'waste',
+    'confusing', 'confused', 'unclear', 'didn\'t understand', 'hard to follow',
+    'too fast', 'very fast', 'breaking', 'broke', 'lag', 'lagging', 'disconnected',
+    'camera off', 'no camera', 'camera was off', 'zero interaction', 'no interaction',
+    'not clear', 'not good', 'not helpful', 'not engaging', 'slow', 'too slow',
+    'couldn\'t hear', 'audio issue', 'voice breaking', 'mic issue', 'network issue'];
+  
+  const positiveWords = ['excellent', 'amazing', 'wonderful', 'fantastic', 'love', 'loved',
+    'great explanation', 'well explained', 'very clear', 'very helpful', 'interesting',
+    'enjoyed', 'engaging', 'interactive', 'informative', 'insightful', 'effective',
+    'knowledgeable', 'good examples', 'real world', 'practical example', 'understood',
+    'easy to understand', 'well structured', 'very good session', 'learned a lot'];
+  
+  const suggestionWords = ['suggest', 'suggestion', 'should', 'could', 'would be better',
+    'please', 'try to', 'recommend', 'improve', 'improvement', 'next time',
+    'in future', 'would like', 'can you', 'if possible', 'it would be nice',
+    'maybe', 'perhaps', 'consider', 'add more', 'more examples', 'more practice'];
+  
+  const negCount = negativeWords.filter(w => t.includes(w)).length;
+  const posCount = positiveWords.filter(w => t.includes(w)).length;
+  const sugCount = suggestionWords.filter(w => t.includes(w)).length;
+  
+  if (sugCount > 0 && negCount > 0) return 'suggestion';
+  if (sugCount > posCount) return 'suggestion';
+  if (negCount > posCount) return 'negative';
+  if (posCount > 0) return 'positive';
+  return 'neutral';
+}
+```
+
+### Step 3: Extract Themes
+```javascript
+function extractThemes(text) {
+  const t = text.toLowerCase();
+  const themes = [];
+  
+  const themeMap = {
+    'pace': ['pace', 'speed', 'fast', 'slow', 'rushed', 'too quick', 'hurried'],
+    'audio': ['audio', 'voice', 'mic', 'microphone', 'sound', 'hear', 'hearing', 'breaking', 'echo'],
+    'video': ['camera', 'video', 'screen', 'visual', 'display', 'share screen'],
+    'content': ['content', 'topic', 'material', 'slides', 'notes', 'examples', 'theory'],
+    'delivery': ['delivery', 'explanation', 'explained', 'teaching', 'trainer', 'instructor'],
+    'interaction': ['interaction', 'interactive', 'engage', 'engaging', 'participation', 'q&a', 'questions'],
+    'language': ['language', 'hindi', 'english', 'terminology', 'terms'],
+    'network': ['network', 'connection', 'internet', 'lag', 'buffering', 'disconnect'],
+    'tools': ['tool', 'software', 'platform', 'zoom', 'code', 'script', 'demo']
+  };
+  
+  for (const [theme, keywords] of Object.entries(themeMap)) {
+    if (keywords.some(kw => t.includes(kw))) {
+      themes.push(theme);
+    }
+  }
+  
+  return themes; // array of theme strings
+}
+```
+
+---
+
+## 📊 DASHBOARD — 6 LEVELS OF DRILL-DOWN
+
+### Level 1: Overall Summary
+Show at the top of the dashboard. KPI cards:
+- 📋 Total Sessions Uploaded
+- 👥 Total Responses
+- ⭐ Avg Delivery Rating (out of 5)
+- ⭐ Avg Content Rating (out of 5)
+- 📈 Combined Rating
+- 💬 Useful Feedback Count
+
+### Level 2: Program-wise
+Click a program → see metrics filtered by that program.
+(Currently all data is one program: "BS Data Science and Artificial Intelligence")
+
+### Level 3: Subject-wise
+Cards for each subject: ATA, BDA, FSP, LANA
+Each card shows:
+- Avg Delivery Rating
+- Avg Content Rating
+- NPS Score
+- Response count
+- Trend arrow (↑↓ vs last session)
+
+### Level 4: Cohort Breakdown
+Tab showing 2025-BS vs 2024-BS vs External:
+- Side-by-side bar chart
+- Table: cohort × subject heatmap with color coding (red=low, green=high)
+
+### Level 5: Session/Week Timeline
+For each subject, show week-over-week trend:
+- Line chart: delivery and content ratings over time
+- X-axis = session dates in order
+
+### Level 6: Deep Dive (within a subject)
+Click a subject card → open drill-down panel:
+- Delivery rating distribution (bar chart: 1 through 5)
+- Content rating distribution (bar chart: 1 through 5)
+- Cohort comparison within this subject
+- Feedback tab: sentiment pie, themes bar, word list
+
+---
+
+## 🖥️ FRONTEND UI SPECIFICATION
+
+### Color Theme (Dark Professional)
+```css
+--bg-primary: #0f172a
+--bg-card: #1e293b
+--bg-hover: #334155
+--accent-blue: #3b82f6
+--accent-green: #22c55e
+--accent-amber: #f59e0b
+--accent-red: #ef4444
+--text-primary: #f8fafc
+--text-secondary: #94a3b8
+--border: #334155
+```
+
+### Page 1: Upload Page (`/upload`)
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  📊 Poll Analytics Dashboard                     [Dashboard] │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  Upload New Poll Session                                     │
+│  ┌────────────────────────────────────────────────────┐    │
+│  │ Program Name*         [Dropdown ▼]                 │    │
+│  │ Session Type*         ○ Practical  ○ Theory        │    │
+│  │ Semester/Module*      [Text input]                 │    │
+│  │ Week Number*          [Text input]                 │    │
+│  │ Subject               (Auto-detected from CSV)     │    │
+│  │                                                    │    │
+│  │ ┌─────────────────────────────────────────────┐   │    │
+│  │ │  📁 Drop CSV here or click to browse        │   │    │
+│  │ │     Accepts .csv files only                 │   │    │
+│  │ └─────────────────────────────────────────────┘   │    │
+│  │                                                    │    │
+│  │  [Upload & Analyze]    [Fetch from Zoom →]         │    │
+│  └────────────────────────────────────────────────────┘    │
+│                                                              │
+│  Recent Uploads                                              │
+│  [Table showing last 10 uploads with subject, date, count]  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**"Fetch from Zoom" button**: when clicked, show a toast notification saying "🚧 Coming Soon — Zoom API integration is planned for a future release"
+
+**Program Name Dropdown** — exact values (locked, no free text):
+```
+BS Data Science and Artificial Intelligence
+BS Mathematics and Computing
+BS Economics and Finance
+BS Physics
+BS Chemistry
+BS Biology
+Integrated MTech Computer Science
+MTech Data Science
+PhD Program
+```
+
+### Page 2: Dashboard Page (`/dashboard`)
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  📊 Poll Analytics Dashboard          [Upload] [🔄 Refresh] │
+├─────────────────────────────────────────────────────────────┤
+│  [Overview] [Subjects] [Trends] [Cohorts] [Feedback]        │
+│─────────────────────────────────────────────────────────────│
+│  Tab: Overview                                               │
+│                                                              │
+│  ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐   │
+│  │ 7    │ │1,421 │ │ 4.38 │ │ 4.40 │ │ 4.39 │ │  63  │   │
+│  │Sess. │ │Resp. │ │Deliv.│ │Cont. │ │Comb. │ │Feedb.│   │
+│  └──────┘ └──────┘ └──────┘ └──────┘ └──────┘ └──────┘   │
+│                                                              │
+│  Subject Comparison (Bar Chart)                              │
+│  ATA ████████████ 4.42                                       │
+│  BDA ████████████ 4.35                                       │
+│  FSP ████████████ 4.41                                       │
+│  LANA████████████ 4.38                                       │
+│                                                              │
+│  Rating Distribution (per subject)                           │
+│  [Recharts stacked bar or grouped bar chart]                 │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Tab: Subjects**
+- Grid of 4 cards (ATA, BDA, FSP, LANA)
+- Each card: subject name, avg ratings, NPS badge, "View Details →" button
+- Clicking "View Details" opens a slide-out panel with the Level 6 drill-down
+
+**Tab: Trends**
+- Subject selector (dropdown or tab buttons: ATA | BDA | FSP | LANA | All)
+- Line chart: X = session dates, Y = rating (0–5), two lines (delivery + content)
+- Below: table of all sessions for that subject
+
+**Tab: Cohorts**
+- Two bar charts side by side: Delivery Ratings and Content Ratings per cohort
+- Heatmap table: Subject (rows) × Cohort (columns) → cell = avg combined rating with color coding
+
+**Tab: Feedback**
+- Filters: Subject selector, Sentiment filter
+- Sentiment Pie Chart (positive/negative/suggestion/neutral)
+- Theme Bar Chart (pace, audio, content, delivery, interaction, language, network, tools)
+- Below: three sections:
+  - 🔴 Issues Flagged (negative comments, max 10)
+  - 🟡 Suggestions (suggestion comments, max 10)
+  - 🟢 Highlights (positive comments, max 5)
+
+---
+
+## ⚙️ BACKEND LOGIC — CSV PROCESSING FLOW
+
+When a CSV is uploaded to `POST /api/upload`:
+
+```
+1. Multer saves file to ./uploads/temp_TIMESTAMP.csv
+2. Read file with utf-8-sig encoding
+3. Split into lines (handle \r\n and \n)
+4. Extract metadata from rows 2–3:
+   - Row 3, col 1 (index 1): Meeting Topic → parse subject and session type
+   - Row 3, col 2 (index 2): Meeting ID → use for duplicate check
+   - Row 3, col 3 (index 3): Session date
+5. CHECK DUPLICATE: query uploads table WHERE meeting_id = extracted_id
+   - If found → return error JSON with original upload date → DO NOT SAVE
+6. Find header row: scan lines for one containing 'User Name'
+   - This is Row 10 (index 9)
+7. Parse data rows from next line onward:
+   - Skip if line is empty or starts with ','
+   - Extract: name, email, submission_time, delivery_rating, content_rating, feedback_text
+   - Detect cohort from email prefix
+   - Classify feedback: isUseful → sentiment → themes (call nlp.js)
+8. Compute aggregated metrics:
+   - avg_delivery = average of all delivery_rating values (exclude NULLs)
+   - avg_content = average of all content_rating values (exclude NULLs)
+   - avg_combined = (avg_delivery + avg_content) / 2
+   - nps_delivery = (count of 5s - count of 1s and 2s) / total × 100
+   - feedback_count = count of useful feedback items
+9. INSERT INTO uploads (metadata + aggregated metrics)
+10. INSERT INTO poll_responses (one row per student)
+11. UPSERT INTO students (update if email exists)
+12. Delete the temp CSV file
+13. Return success JSON with summary stats
+```
+
+---
+
+## 🔢 METRICS FORMULAS
+
+```
+Average Rating = SUM(ratings) / COUNT(non-null ratings)
+
+NPS = ((Count of 5-star ratings) - (Count of 1-star + 2-star ratings)) / Total × 100
+
+Participation = Total Responses (just a count)
+
+Feedback Rate = (Count of non-empty feedback / Total Responses) × 100
+
+Session Satisfaction = (Avg Delivery + Avg Content) / 2
+
+Trend Direction = Current avg - Previous session's avg for same subject
+  If > 0.1 → "↑ Improving"
+  If < -0.1 → "↓ Declining"
+  Else → "→ Stable"
+```
+
+---
+
+## 🔄 DUPLICATE DETECTION STRATEGY
+
+Use `Meeting/Webinar ID` (Row 3, Column C of the CSV) as the unique key.
+- Every Zoom session has a unique meeting ID
+- Store it in the `uploads.meeting_id` column with a UNIQUE constraint
+- On upload, query: `SELECT * FROM uploads WHERE meeting_id = ?`
+- If match found: return error with original upload date
+- If not found: proceed with processing
+
+---
+
+## 🚀 DEPLOYMENT — REPLIT SPECIFIC INSTRUCTIONS
+
+This app must be deployed on **Replit** (replit.com). Here is how to structure it:
+
+### Replit Configuration
+Create a file `.replit` at the project root:
+```toml
+run = "npm run start"
+entrypoint = "server.js"
+
+[nix]
+channel = "stable-24_11"
+
+[deployment]
+run = ["sh", "-c", "npm run start"]
+deploymentTarget = "cloudrun"
+```
+
+### Monorepo Structure for Replit
+Instead of separate frontend/backend folders, use this Replit-optimized structure:
+
+```
+/
+├── server.js              ← Express server (serves both API and React build)
+├── package.json           ← Root package.json with all scripts
+├── db/
+│   └── polls.db           ← SQLite database (auto-created)
+├── uploads/               ← Temp uploads folder
+├── src/                   ← Backend source
+│   ├── database.js
+│   ├── routes/
+│   │   ├── upload.js
+│   │   └── dashboard.js
+│   ├── services/
+│   │   ├── csvParser.js
+│   │   ├── metrics.js
+│   │   └── nlp.js
+│   └── utils/
+│       └── helpers.js
+├── client/                ← React frontend
+│   ├── src/
+│   │   ├── App.jsx
+│   │   ├── main.jsx
+│   │   └── ... (all components)
+│   ├── index.html
+│   └── package.json
+└── .replit
+```
+
+### Root `package.json`
+```json
+{
+  "name": "poll-dashboard",
+  "version": "1.0.0",
+  "scripts": {
+    "install:all": "npm install && cd client && npm install",
+    "build:client": "cd client && npm run build",
+    "start": "node server.js",
+    "dev": "node server.js",
+    "setup": "npm run install:all && npm run build:client"
+  },
+  "dependencies": {
+    "express": "^4.21.1",
+    "better-sqlite3": "^11.7.0",
+    "multer": "^1.4.5-lts.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7"
+  }
+}
+```
+
+### `server.js` (Root — Serves Everything)
+```javascript
+const express = require('express');
+const path = require('path');
+const cors = require('cors');
+require('dotenv').config();
+
+const { initDB } = require('./src/database');
+const uploadRouter = require('./src/routes/upload');
+const dashboardRouter = require('./src/routes/dashboard');
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.use(cors());
+app.use(express.json());
+
+// API routes
+app.use('/api', uploadRouter);
+app.use('/api', dashboardRouter);
+
+// Serve React frontend (production build)
+app.use(express.static(path.join(__dirname, 'client/dist')));
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'client/dist/index.html'));
+});
+
+// Initialize DB and start server
+initDB();
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Server running on port ${PORT}`);
+});
+```
+
+### Client `package.json`
+```json
+{
+  "name": "poll-dashboard-client",
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "vite --port 5173",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.22.0",
+    "recharts": "^2.12.0",
+    "axios": "^1.6.7"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.2.1",
+    "vite": "^5.1.0",
+    "tailwindcss": "^3.4.1",
+    "autoprefixer": "^10.4.17",
+    "postcss": "^8.4.35"
+  }
+}
+```
+
+### Vite Config (`client/vite.config.js`)
+```javascript
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+
+export default defineConfig({
+  plugins: [react()],
+  server: {
+    proxy: {
+      '/api': 'http://localhost:3000'
+    }
+  },
+  build: {
+    outDir: 'dist'
+  }
+});
+```
+
+---
+
+## 📋 BUILD ORDER (Do In This Exact Order)
+
+1. Create the root file structure
+2. Install all dependencies (npm run setup)
+3. Build `src/database.js` — creates all 3 tables on startup
+4. Build `src/services/csvParser.js` — the Zoom CSV custom parser
+5. Build `src/services/nlp.js` — sentiment + themes
+6. Build `src/services/metrics.js` — averages, NPS, distributions
+7. Build `src/routes/upload.js` — POST /api/upload
+8. Build `src/routes/dashboard.js` — all GET /api/* routes
+9. Build `server.js` — ties everything together
+10. Build React frontend (client/src/) — start with App.jsx + routing
+11. Build UploadPage.jsx + UploadForm component
+12. Build DashboardPage.jsx with 5 tabs
+13. Build chart components (use Recharts)
+14. Configure Tailwind CSS
+15. Run `npm run build:client` to build React
+16. Test with `npm run start`
+17. Deploy on Replit → click "Deploy" → get public URL
+
+---
+
+## 🧪 VERIFICATION CHECKLIST
+
+After building, verify these work:
+
+- [ ] Upload a CSV → success response with correct stats
+- [ ] Upload same CSV again → duplicate error with original date
+- [ ] Upload wrong format file → clear error message
+- [ ] Dashboard loads → 6 KPI cards visible
+- [ ] Subjects tab → 4 subject cards (ATA, BDA, FSP, LANA)
+- [ ] Click subject card → drill-down panel opens
+- [ ] Trends tab → line chart shows Feb → Mar improvement for ATA
+- [ ] Cohorts tab → 2025-BS shows more responses than 2024-BS
+- [ ] Feedback tab → sentiment pie chart visible
+- [ ] "Fetch from Zoom" button → shows "Coming Soon" toast
+- [ ] All data persists after page refresh
+
+---
+
+## 📊 EXPECTED DATA (From 7 Sample CSVs)
+
+These 7 files are the initial dataset:
+
+| File | Subject | Session Type | Month | Responses |
+|------|---------|-------------|-------|-----------|
+| ATA__PS__Poll__07_Feb_ | ATA | Practical | Feb | 168 |
+| ATA__PS__Poll__07_Mar_ | ATA | Practical | Mar | 244 |
+| BDA__PS__Poll__06_Feb_ | BDA | Practical | Feb | 168 |
+| FSP__PS__Poll__08_Feb_ | FSP | Practical | Feb | 189 |
+| FSP__PS__Poll__08_Mar_ | FSP | Practical | Mar | 237 |
+| LANA__PS__Poll__07_Feb_ | LANA | Practical | Feb | 182 |
+| LANA__PS__Poll__07_Mar_ | LANA | Practical | Mar | 233 |
+| **TOTAL** | | | | **1,421** |
+
+After uploading all 7 CSVs, the dashboard should show:
+- 7 total sessions
+- ~1,421 total responses
+- Avg ratings between 4.3–4.5
+- 4 subjects (ATA, BDA, FSP, LANA)
+- Cohorts: mostly 2025-BS, some 2024-BS, some External
+
+---
+
+## ⚠️ CRITICAL EDGE CASES TO HANDLE
+
+1. **BOM Character**: Always use `utf-8-sig` or strip `\ufeff` from start of file
+2. **CRLF vs LF**: Handle both `\r\n` and `\n` line endings
+3. **Multiline fields**: Feedback text can contain commas and newlines inside quotes — use proper CSV parsing
+4. **Empty ratings**: Store as NULL, never as 0 (to avoid skewing averages)
+5. **Missing feedback**: `is_useful_feedback = 0` and `feedback_text = NULL` — do not crash
+6. **Port binding on Replit**: Always bind to `0.0.0.0`, not `localhost`
+7. **Database directory**: Create `./db/` folder if it doesn't exist before initializing SQLite
+8. **Upload directory**: Create `./uploads/` folder if it doesn't exist
+9. **React build on Replit**: Run `npm run build:client` before starting server
+10. **CORS**: Enable CORS on all API routes for development
+
+---
+
+## 🎨 STYLING NOTES
+
+- Use **Tailwind CSS** for all styling
+- Dark background: `bg-slate-900` (body) and `bg-slate-800` (cards)
+- KPI cards: rounded-xl, shadow-lg, hover:scale-105 transition
+- Charts: white/gray text on dark background — set `stroke` and `fill` accordingly in Recharts
+- Active tab: `bg-blue-600 text-white`, inactive: `text-slate-400 hover:text-white`
+- Buttons: `bg-blue-600 hover:bg-blue-700 text-white rounded-lg px-4 py-2`
+- Error messages: `bg-red-900/30 border border-red-500 text-red-300`
+- Success messages: `bg-green-900/30 border border-green-500 text-green-300`
+- Font: Inter or system-ui
+
+---
+
+## ✅ FINAL DELIVERABLE
+
+When you are done, provide:
+1. ✅ All files created and working
+2. ✅ `npm run setup` completes without errors
+3. ✅ `npm run start` starts the server on port 3000
+4. ✅ The React app is served from the Express server at `/`
+5. ✅ The Replit "Deploy" button is available → click it → get a public URL like `https://poll-dashboard.USERNAME.repl.co`
+6. ✅ Confirm the public URL is live and the app works end-to-end
+
+**The app is done when someone can open the public Replit URL, upload a CSV, and see the dashboard update — with no local setup required on their end.**

@@ -1,0 +1,17 @@
+packages:
+  "recharts": "For interactive data visualization (line, bar, pie charts)"
+  "framer-motion": "For page transitions and smooth drill-down reveals"
+  "clsx": "For conditional tailwind class merging"
+  "tailwind-merge": "For conditional tailwind class merging"
+  "lucide-react": "For beautiful UI icons"
+  "date-fns": "For formatting dates in the history table"
+
+images:
+  - path: "artifacts/poll-dashboard/public/images/hero-glow.png"
+    description: "Abstract dark background with a soft, glowing deep blue and purple gradient mesh, professional analytics vibe"
+    aspect_ratio: "16:9"
+
+notes:
+  - Expects @workspace/api-client-react to be available for data fetching
+  - Using native HTML inputs styled with Tailwind for bulletproof form rendering
+  - Dark mode by default using Tailwind variables

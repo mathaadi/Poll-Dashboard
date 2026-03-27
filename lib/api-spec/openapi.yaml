@@ -1,22 +1,24 @@
 openapi: 3.1.0
 info:
-  # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: Poll Analytics Dashboard API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: upload
+    description: CSV upload operations
+  - name: dashboard
+    description: Dashboard analytics operations
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,6 +26,174 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /summary:
+    get:
+      operationId: getSummary
+      tags: [dashboard]
+      summary: Get overall summary stats
+      responses:
+        "200":
+          description: Summary statistics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Summary"
+
+  /subjects:
+    get:
+      operationId: getSubjects
+      tags: [dashboard]
+      summary: Get per-subject analytics
+      responses:
+        "200":
+          description: Subject analytics list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SubjectAnalytics"
+
+  /cohorts:
+    get:
+      operationId: getCohorts
+      tags: [dashboard]
+      summary: Get cohort breakdown
+      responses:
+        "200":
+          description: Cohort breakdown list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CohortAnalytics"
+
+  /trends:
+    get:
+      operationId: getTrends
+      tags: [dashboard]
+      summary: Get weekly trends
+      parameters:
+        - name: subject
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Weekly trend data
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TrendPoint"
+
+  /distribution:
+    get:
+      operationId: getDistribution
+      tags: [dashboard]
+      summary: Get rating distribution
+      parameters:
+        - name: subject
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: type
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [delivery, content]
+      responses:
+        "200":
+          description: Rating distribution
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Distribution"
+
+  /feedback:
+    get:
+      operationId: getFeedback
+      tags: [dashboard]
+      summary: Get NLP feedback analysis
+      parameters:
+        - name: subject
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Feedback NLP analysis
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FeedbackAnalysis"
+
+  /history:
+    get:
+      operationId: getHistory
+      tags: [dashboard]
+      summary: Get upload history
+      responses:
+        "200":
+          description: Upload history list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/UploadHistory"
+
+  /upload:
+    post:
+      operationId: uploadCsv
+      tags: [upload]
+      summary: Upload a Zoom poll CSV
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                program_name:
+                  type: string
+                session_type:
+                  type: string
+                cohort:
+                  type: string
+                semester:
+                  type: string
+                week_number:
+                  type: string
+              required:
+                - file
+                - program_name
+                - semester
+                - week_number
+      responses:
+        "200":
+          description: Upload result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadResult"
+        "400":
+          description: Upload error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadError"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +204,304 @@ components:
       required:
         - status
 
+    Summary:
+      type: object
+      properties:
+        total_sessions:
+          type: integer
+        total_responses:
+          type: integer
+        avg_delivery:
+          type: number
+        avg_content:
+          type: number
+        avg_combined:
+          type: number
+        subjects:
+          type: array
+          items:
+            type: string
+        programs:
+          type: array
+          items:
+            type: string
+        date_range:
+          type: object
+          properties:
+            from:
+              type: string
+            to:
+              type: string
+          required:
+            - from
+            - to
+      required:
+        - total_sessions
+        - total_responses
+        - avg_delivery
+        - avg_content
+        - avg_combined
+        - subjects
+        - programs
+        - date_range
+
+    TrendPoint:
+      type: object
+      properties:
+        session_date:
+          type: string
+        week:
+          type: string
+        avg_delivery:
+          type: number
+        avg_content:
+          type: number
+        responses:
+          type: integer
+        subject:
+          type: string
+      required:
+        - session_date
+        - week
+        - avg_delivery
+        - avg_content
+        - responses
+
+    SubjectTrendPoint:
+      type: object
+      properties:
+        week:
+          type: string
+        delivery:
+          type: number
+        content:
+          type: number
+      required:
+        - week
+        - delivery
+        - content
+
+    SubjectAnalytics:
+      type: object
+      properties:
+        subject:
+          type: string
+        total_sessions:
+          type: integer
+        total_responses:
+          type: integer
+        avg_delivery:
+          type: number
+        avg_content:
+          type: number
+        nps:
+          type: number
+        trend:
+          type: array
+          items:
+            $ref: "#/components/schemas/SubjectTrendPoint"
+      required:
+        - subject
+        - total_sessions
+        - total_responses
+        - avg_delivery
+        - avg_content
+        - nps
+        - trend
+
+    CohortSubjectRating:
+      type: object
+      additionalProperties:
+        type: object
+        properties:
+          avg_delivery:
+            type: number
+          avg_content:
+            type: number
+        required:
+          - avg_delivery
+          - avg_content
+
+    CohortAnalytics:
+      type: object
+      properties:
+        cohort:
+          type: string
+        total_responses:
+          type: integer
+        avg_delivery:
+          type: number
+        avg_content:
+          type: number
+        by_subject:
+          $ref: "#/components/schemas/CohortSubjectRating"
+      required:
+        - cohort
+        - total_responses
+        - avg_delivery
+        - avg_content
+        - by_subject
+
+    Distribution:
+      type: object
+      properties:
+        "1":
+          type: integer
+        "2":
+          type: integer
+        "3":
+          type: integer
+        "4":
+          type: integer
+        "5":
+          type: integer
+        total:
+          type: integer
+        nps:
+          type: number
+      required:
+        - "1"
+        - "2"
+        - "3"
+        - "4"
+        - "5"
+        - total
+        - nps
+
+    ThemeCount:
+      type: object
+      properties:
+        theme:
+          type: string
+        count:
+          type: integer
+      required:
+        - theme
+        - count
+
+    SentimentBreakdown:
+      type: object
+      properties:
+        positive:
+          type: integer
+        negative:
+          type: integer
+        suggestion:
+          type: integer
+        neutral:
+          type: integer
+      required:
+        - positive
+        - negative
+        - suggestion
+        - neutral
+
+    FeedbackAnalysis:
+      type: object
+      properties:
+        total_feedback:
+          type: integer
+        useful_feedback:
+          type: integer
+        sentiment:
+          $ref: "#/components/schemas/SentimentBreakdown"
+        themes:
+          type: array
+          items:
+            $ref: "#/components/schemas/ThemeCount"
+        top_negative:
+          type: array
+          items:
+            type: string
+        top_suggestions:
+          type: array
+          items:
+            type: string
+        top_positive:
+          type: array
+          items:
+            type: string
+      required:
+        - total_feedback
+        - useful_feedback
+        - sentiment
+        - themes
+        - top_negative
+        - top_suggestions
+        - top_positive
+
+    UploadHistory:
+      type: object
+      properties:
+        id:
+          type: integer
+        subject:
+          type: string
+        session_date:
+          type: string
+        program_name:
+          type: string
+        week_number:
+          type: string
+        total_responses:
+          type: integer
+        avg_combined_rating:
+          type: number
+        upload_timestamp:
+          type: string
+        session_type:
+          type: string
+        meeting_topic:
+          type: string
+      required:
+        - id
+        - subject
+        - session_date
+        - program_name
+        - week_number
+        - total_responses
+        - avg_combined_rating
+        - upload_timestamp
+        - session_type
+        - meeting_topic
+
+    UploadResult:
+      type: object
+      properties:
+        success:
+          type: boolean
+        upload_id:
+          type: integer
+        subject:
+          type: string
+        total_responses:
+          type: integer
+        avg_delivery_rating:
+          type: number
+        avg_content_rating:
+          type: number
+        message:
+          type: string
+      required:
+        - success
+        - upload_id
+        - subject
+        - total_responses
+        - avg_delivery_rating
+        - avg_content_rating
+
+    UploadError:
+      type: object
+      properties:
+        success:
+          type: boolean
+        error:
+          type: string
+        message:
+          type: string
+        original_upload_date:
+          type: string
+      required:
+        - success
+        - error
+        - message
